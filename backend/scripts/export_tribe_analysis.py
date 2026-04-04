@@ -60,6 +60,8 @@ async def _run(video: Path, output: Path, video_id: str | None, *, show_progress
 
 
 def main() -> None:
+    import traceback
+
     p = argparse.ArgumentParser(description="Export TRIBE AnalysisResult JSON for Brain Fresh")
     p.add_argument("video", type=Path, help="Input video path")
     p.add_argument("-o", "--output", type=Path, default=Path("analysis_export.json"))
@@ -76,9 +78,17 @@ def main() -> None:
         help="Show a tqdm progress bar (recommended in Google Colab)",
     )
     args = p.parse_args()
-    if not args.video.is_file():
-        sys.exit(f"Video not found: {args.video}")
-    asyncio.run(_run(args.video, args.output, args.video_id, show_progress=args.progress))
+    video = args.video.expanduser().resolve()
+    if not video.is_file():
+        print(f"ERROR: Video not found or not a file:\n  {video}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        asyncio.run(_run(video, args.output, args.video_id, show_progress=args.progress))
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
