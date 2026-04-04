@@ -3,9 +3,11 @@ import { Upload, Film } from "lucide-react";
 
 interface Props {
   onUpload: (file: File) => void;
+  /** When true, fits the upload UI in the main column next to the brain preview */
+  embedded?: boolean;
 }
 
-export default function VideoUpload({ onUpload }: Props) {
+export default function VideoUpload({ onUpload, embedded }: Props) {
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDrop = useCallback(
@@ -29,14 +31,22 @@ export default function VideoUpload({ onUpload }: Props) {
   );
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <Film size={32} color="#8b5cf6" />
-        <h1 style={styles.title}>Brain Fresh</h1>
-        <p style={styles.subtitle}>
-          Analyze video engagement using neural brain encoding
+    <div style={embedded ? styles.containerEmbedded : styles.container}>
+      {!embedded && (
+        <div style={styles.header}>
+          <Film size={32} color="#8b5cf6" />
+          <h1 style={styles.title}>Brain Fresh</h1>
+          <p style={styles.subtitle}>
+            Analyze video engagement using neural brain encoding
+          </p>
+        </div>
+      )}
+
+      {embedded && (
+        <p style={styles.embeddedIntro}>
+          Upload a video to analyze engagement with TRIBE v2 brain encoding.
         </p>
-      </div>
+      )}
 
       <div
         onDragOver={(e) => {
@@ -79,6 +89,20 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     minHeight: "100vh",
     padding: "2rem",
+  },
+  containerEmbedded: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    width: "100%",
+    minWidth: 0,
+    gap: "1rem",
+  },
+  embeddedIntro: {
+    color: "#888",
+    fontSize: "0.95rem",
+    lineHeight: 1.5,
+    margin: 0,
   },
   header: {
     textAlign: "center",
