@@ -96,6 +96,11 @@ export default function App() {
   const brainActivations = analysis?.brain_activations ?? [];
   const showResults = appState === "results" && analysis !== null;
 
+  const handleImportAnalysisJson = (data: AnalysisResult) => {
+    setAnalysis({ ...data, video_id: videoId });
+    setAppState("results");
+  };
+
   return (
     <div style={styles.layout}>
       <div
@@ -130,11 +135,21 @@ export default function App() {
                     onTogglePlay={togglePlay}
                   />
                   <div style={styles.processingOverlay}>
-                    <LoadingScreen embedded status={processingStatus} />
+                    <LoadingScreen
+                      embedded
+                      status={processingStatus}
+                      videoId={videoId}
+                      onImportAnalysisJson={handleImportAnalysisJson}
+                    />
                   </div>
                 </div>
               ) : (
-                <LoadingScreen embedded status={processingStatus} />
+                <LoadingScreen
+                  embedded
+                  status={processingStatus}
+                  videoId={videoId}
+                  onImportAnalysisJson={handleImportAnalysisJson}
+                />
               ))}
             {showResults && (
               <VideoPlayer

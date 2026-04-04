@@ -1,12 +1,22 @@
-import type { ProcessingStatus } from "../types";
+import type { AnalysisResult, ProcessingStatus } from "../types";
 import { Brain } from "lucide-react";
+import { useRef } from "react";
 
 interface Props {
   status: ProcessingStatus;
+  /** When true, fits beside the brain preview instead of full viewport */
   embedded?: boolean;
+  videoId?: string;
+  onImportAnalysisJson?: (data: AnalysisResult) => void;
 }
 
-export default function LoadingScreen({ status, embedded }: Props) {
+export default function LoadingScreen({
+  status,
+  embedded,
+  videoId,
+  onImportAnalysisJson,
+}: Props) {
+  const fileRef = useRef<HTMLInputElement>(null);
   return (
     <div style={embedded ? styles.containerEmbedded : styles.container}>
       <div style={embedded ? styles.cardEmbedded : styles.card}>
@@ -17,7 +27,14 @@ export default function LoadingScreen({ status, embedded }: Props) {
             style={{ animation: "pulse 2s ease-in-out infinite" }}
           />
         </div>
-        <h2 style={embedded ? styles.titleEmbedded : styles.title}>Analyzing Your Video</h2>
+        <h2 style={embedded ? styles.titleEmbedded : styles.title}>
+          Analyzing Your Video
+        </h2>
+        {videoId ? (
+          <p style={styles.videoIdLine}>
+            Video ID for Colab export: <code style={styles.code}>{videoId}</code>
+          </p>
+        ) : null}
         <p style={styles.message}>{status.message || "Preparing..."}</p>
 
         <div style={styles.progressTrack}>
@@ -57,6 +74,51 @@ export default function LoadingScreen({ status, embedded }: Props) {
             active={false}
           />
         </div>
+
+        {status.status === "error" && onImportAnalysisJson ? (
+          <div style={styles.importBox}>
+            <p style={styles.importTitle}>Ran inference in Colab?</p>
+            <p style={styles.importHint}>
+              Export <code style={styles.code}>analysis_export.json</code> (see{" "}
+              <code style={styles.code}>notebooks/colab_brain_fresh_export.ipynb</code>
+              ), then load it here. Playback still uses the video you uploaded.
+            </p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                try {
+                  const raw = JSON.parse(await f.text()) as unknown;
+                  const data = raw as AnalysisResult;
+                  if (
+                    !data ||
+                    typeof data !== "object" ||
+                    !Array.isArray(data.timeline) ||
+                    typeof data.duration !== "number"
+                  ) {
+                    alert("Invalid JSON: expected Brain Fresh AnalysisResult shape.");
+                    return;
+                  }
+                  onImportAnalysisJson(data);
+                } catch {
+                  alert("Could not parse JSON file.");
+                }
+              }}
+            />
+            <button
+              type="button"
+              style={styles.importBtn}
+              onClick={() => fileRef.current?.click()}
+            >
+              Load analysis JSON
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <style>{`
@@ -188,5 +250,45 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "0.75rem",
     alignItems: "flex-start",
     paddingLeft: "1rem",
+  },
+  videoIdLine: {
+    color: "#888",
+    fontSize: "0.8rem",
+    marginBottom: "0.5rem",
+  },
+  code: {
+    fontFamily: "ui-monospace, monospace",
+    fontSize: "0.85em",
+    background: "#1a1a2e",
+    padding: "0.1rem 0.35rem",
+    borderRadius: 4,
+    color: "#c4b5fd",
+  },
+  importBox: {
+    marginTop: "2rem",
+    paddingTop: "1.5rem",
+    borderTop: "1px solid #2a2a3e",
+    textAlign: "left" as const,
+  },
+  importTitle: {
+    color: "#e0e0e0",
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    marginBottom: "0.5rem",
+  },
+  importHint: {
+    color: "#777",
+    fontSize: "0.8rem",
+    lineHeight: 1.5,
+    marginBottom: "1rem",
+  },
+  importBtn: {
+    padding: "0.5rem 1rem",
+    background: "rgba(139, 92, 246, 0.2)",
+    border: "1px solid #6d28d9",
+    borderRadius: 8,
+    color: "#c4b5fd",
+    fontSize: "0.9rem",
+    cursor: "pointer",
   },
 };

@@ -3,6 +3,7 @@ import { Upload, Film } from "lucide-react";
 
 interface Props {
   onUpload: (file: File) => void;
+  /** When true, fits the upload UI in the main column next to the brain preview */
   embedded?: boolean;
 }
 

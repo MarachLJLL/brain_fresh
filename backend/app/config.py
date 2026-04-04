@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 500
     tribe_model_id: str = "facebook/tribev2"
     tribe_cache_dir: str = "./model_cache"
+    # TRIBE v2 open weights output fsaverage5 cortical vertices (~20k). We subsample for JSON
+    # payload size; raise toward 20484 for max detail (larger responses / slower UI).
+    tribe_brain_vertex_target: int = 8192
     # auto: cuda if available, else Apple MPS (Metal) on supported Macs, else cpu.
     # Override with TRIBE_DEVICE=cpu|mps|cuda in .env if needed (CUDA is not available on macOS).
     tribe_device: str = "auto"
@@ -19,6 +22,8 @@ class Settings(BaseSettings):
     moonshot_model: str = "moonshot-v1-8k"
     low_engagement_threshold: float = 0.3  # bottom 30th percentile = low engagement
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    # Allow POST /api/video/import-result/{video_id} for Colab / demo JSON (do not enable in production)
+    allow_analysis_import: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

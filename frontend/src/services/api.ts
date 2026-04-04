@@ -43,6 +43,15 @@ export async function getAnalysisResult(
   return data;
 }
 
+/** When ALLOW_ANALYSIS_IMPORT=1 on the API; stores Colab-exported JSON for this upload id. */
+export async function importAnalysisResult(
+  videoId: string,
+  result: AnalysisResult
+): Promise<AnalysisResult> {
+  const { data } = await api.post(`/video/import-result/${videoId}`, result);
+  return data;
+}
+
 export async function getFeedback(params: {
   video_id: string;
   section_start: number;

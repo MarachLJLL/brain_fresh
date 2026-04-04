@@ -204,7 +204,6 @@ function CorticalBrain({
         b *= brightness;
       }
 
-      // Per-vertex parcellation masks: sharp boundaries, not gradients
       r += visualMask[i] * vis * STRENGTH;
       g += audioMask[i] * aud * STRENGTH;
       b += textMask[i] * txt * STRENGTH;
@@ -218,7 +217,6 @@ function CorticalBrain({
     attr.needsUpdate = true;
   }, [brainGeo, activations, currentTime, active]);
 
-  // RAS Z = superior (spine axis). Group tilt maps it to screen Y.
   useFrame((_, delta) => {
     if (meshRef.current) {
       meshRef.current.rotation.z += delta * 0.15;
