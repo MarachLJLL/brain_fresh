@@ -13,6 +13,12 @@ interface BrainMeshData {
   faceCount: number;
 }
 
+interface ModalityMapData {
+  visual: number[];
+  audio: number[];
+  text: number[];
+}
+
 type Modality = "visual" | "text" | "audio" | null;
 
 interface Props {
@@ -21,9 +27,9 @@ interface Props {
 }
 
 const MODALITIES: { key: Modality & string; label: string; hint: string; color: string }[] = [
-  { key: "visual", label: "Visual", hint: "Occipital cortex", color: "#ff2020" },
-  { key: "audio", label: "Audio", hint: "Auditory cortex", color: "#00ee44" },
-  { key: "text", label: "Text", hint: "Language network", color: "#2266ff" },
+  { key: "visual", label: "Visual", hint: "Occipital / parietal cortex", color: "#ff2020" },
+  { key: "audio", label: "Audio", hint: "Temporal / insular cortex", color: "#00ee44" },
+  { key: "text", label: "Text", hint: "Frontal / language network", color: "#2266ff" },
 ];
 
 export default function BrainModel({ activations, currentTime }: Props) {
@@ -113,24 +119,13 @@ export default function BrainModel({ activations, currentTime }: Props) {
   );
 }
 
-function gaussLobe(x: number, center: number, sharpness: number): number {
-  const d = x - center;
-  return Math.exp(-sharpness * d * d);
-}
-
-function dist3(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number {
-  const dx = ax - bx, dy = ay - by, dz = az - bz;
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-function gaussDist(d: number, sharpness: number): number {
-  return Math.exp(-sharpness * d * d);
-}
-
-function useBrainGeometry(meshData: BrainMeshData | null) {
+function useBrainGeometry(
+  meshData: BrainMeshData | null,
+  modalityMap: ModalityMapData | null
+) {
   return useMemo(() => {
-    if (!meshData) return null;
-    const { vertices, indices, lhCount, vertexCount } = meshData;
+    if (!meshData || !modalityMap) return null;
+    const { vertices, indices, vertexCount } = meshData;
 
     const geo = new THREE.BufferGeometry();
     const posArr = new Float32Array(vertices);
@@ -143,40 +138,12 @@ function useBrainGeometry(meshData: BrainMeshData | null) {
     colors.fill(0.55);
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
-    const visualMask = new Float32Array(vertexCount);
-    const audioMask = new Float32Array(vertexCount);
-    const textMask = new Float32Array(vertexCount);
-
-    for (let i = 0; i < vertexCount; i++) {
-      const px = posArr[i * 3];
-      const py = posArr[i * 3 + 1];
-      const pz = posArr[i * 3 + 2];
-      const isLeft = i < lhCount;
-
-      // fsaverage5 RAS: X=right, Y=anterior, Z=superior
-      // Visual: occipital pole = posterior = -Y
-      visualMask[i] = Math.max(0, gaussLobe(-py, 0.55, 3.5));
-
-      // Auditory: lateral temporal, bilateral
-      const lateralness = Math.abs(px);
-      const midHeight = 1 - Math.abs(pz - 0.05) * 3;
-      audioMask[i] = Math.max(0,
-        gaussLobe(lateralness, 0.72, 6) *
-        Math.max(0, midHeight) *
-        gaussLobe(-py, -0.1, 1.5)
-      );
-
-      // Language: left perisylvian only
-      if (isLeft) {
-        const broca = gaussDist(dist3(px, py, pz, -0.55, 0.45, 0.25), 4.5);
-        const wernicke = gaussDist(dist3(px, py, pz, -0.65, -0.25, 0.1), 4.5);
-        const angular = gaussDist(dist3(px, py, pz, -0.48, -0.35, 0.40), 5.0);
-        textMask[i] = Math.max(broca, wernicke, angular);
-      }
-    }
+    const visualMask = new Float32Array(modalityMap.visual);
+    const audioMask = new Float32Array(modalityMap.audio);
+    const textMask = new Float32Array(modalityMap.text);
 
     return { geometry: geo, colors, visualMask, audioMask, textMask };
-  }, [meshData]);
+  }, [meshData, modalityMap]);
 }
 
 function CorticalBrain({
@@ -187,13 +154,20 @@ function CorticalBrain({
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
 
-  const raw = useLoader(FileLoader, "/brain-mesh.json");
-  const meshData: BrainMeshData | null = useMemo(() => {
-    if (!raw) return null;
-    return JSON.parse(raw as string) as BrainMeshData;
-  }, [raw]);
+  const rawMesh = useLoader(FileLoader, "/brain-mesh.json");
+  const rawMap = useLoader(FileLoader, "/brain-modality-map.json");
 
-  const brainGeo = useBrainGeometry(meshData);
+  const meshData: BrainMeshData | null = useMemo(() => {
+    if (!rawMesh) return null;
+    return JSON.parse(rawMesh as string) as BrainMeshData;
+  }, [rawMesh]);
+
+  const modalityMap: ModalityMapData | null = useMemo(() => {
+    if (!rawMap) return null;
+    return JSON.parse(rawMap as string) as ModalityMapData;
+  }, [rawMap]);
+
+  const brainGeo = useBrainGeometry(meshData, modalityMap);
 
   useEffect(() => {
     if (!brainGeo) return;
@@ -215,11 +189,10 @@ function CorticalBrain({
     const vis = active === "visual" ? 1 : 0;
     const aud = active === "audio" ? 1 : 0;
     const txt = active === "text" ? 1 : 0;
-    const STRENGTH = 6.0;
+    const STRENGTH = 5.0;
 
     for (let i = 0; i < n; i++) {
-      // Dim base when a modality is active so the glow pops
-      const baseBright = active ? 0.22 : 0.55;
+      const baseBright = active ? 0.18 : 0.55;
       let r = baseBright, g = baseBright, b = baseBright;
 
       if (verts && nAct > 0) {
@@ -231,6 +204,7 @@ function CorticalBrain({
         b *= brightness;
       }
 
+      // Per-vertex parcellation masks: sharp boundaries, not gradients
       r += visualMask[i] * vis * STRENGTH;
       g += audioMask[i] * aud * STRENGTH;
       b += textMask[i] * txt * STRENGTH;
@@ -244,10 +218,7 @@ function CorticalBrain({
     attr.needsUpdate = true;
   }, [brainGeo, activations, currentTime, active]);
 
-  // fsaverage5 uses RAS: X=right, Y=anterior, Z=superior.
-  // Three.js screen: Y=up. Tilt the parent group by -90° around X
-  // so brain-Z (superior) maps to screen-Y (up).
-  // Then spinning the mesh around its local Z rotates like a head turning.
+  // RAS Z = superior (spine axis). Group tilt maps it to screen Y.
   useFrame((_, delta) => {
     if (meshRef.current) {
       meshRef.current.rotation.z += delta * 0.15;
