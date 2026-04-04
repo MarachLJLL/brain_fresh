@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import VideoUpload from "./components/VideoUpload";
 import LoadingScreen from "./components/LoadingScreen";
 import VideoPlayer from "./components/VideoPlayer";
@@ -19,7 +19,6 @@ import type {
   AppState,
   LowEngagementSection,
   ProcessingStatus,
-  TimelinePoint,
 } from "./types";
 
 export default function App() {
@@ -122,20 +121,6 @@ export default function App() {
   const showResults = appState === "results" && analysis !== null;
   const videoSrc = demoVideoUrl ?? getVideoUrl(videoId);
 
-  const currentTimelineDrives = useMemo(() => {
-    if (!analysis?.timeline?.length) return undefined;
-    // Don't drive brain glow until the user has started playing
-    if (currentTime <= 0 && !isPlaying) return undefined;
-    let closest: TimelinePoint | null = null;
-    let minDist = Infinity;
-    for (const pt of analysis.timeline) {
-      const d = Math.abs(pt.time - currentTime);
-      if (d < minDist) { minDist = d; closest = pt; }
-    }
-    if (!closest) return undefined;
-    return { visual: closest.visual, audio: closest.audio, text: closest.text };
-  }, [analysis, currentTime, isPlaying]);
-
   const handleImportAnalysisJson = (data: AnalysisResult) => {
     setAnalysis({ ...data, video_id: videoId });
     setAppState("results");
@@ -209,7 +194,6 @@ export default function App() {
             <BrainModel
               activations={brainActivations}
               currentTime={currentTime}
-              timelineDrives={currentTimelineDrives}
             />
           </div>
         </div>
