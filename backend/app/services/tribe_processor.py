@@ -1,6 +1,8 @@
 import asyncio
 import logging
 from pathlib import Path
+import shutil
+import subprocess
 
 import numpy as np
 
@@ -196,7 +198,21 @@ class TribeProcessor:
         transcript_segments = self._extract_transcript(events_df)
 
         # Find low-engagement sections
-        low_sections = self._find_low_engagement(timeline, transcript_segments)
+        low_sections = self._find_low_engagement(timeline, transcript_segments, duration)
+
+        if low_sections:
+            if progress_callback:
+                await progress_callback(
+                    "analyzing",
+                    95,
+                    "Capturing screenshots for low-engagement sections...",
+                )
+            low_sections = await asyncio.to_thread(
+                self._attach_section_screenshots,
+                video_path,
+                low_sections,
+                duration,
+            )
 
         video_id = Path(video_path).stem
 
@@ -308,6 +324,7 @@ class TribeProcessor:
         self,
         timeline: list[TimelinePoint],
         transcript_segments: list[dict],
+        duration: float,
     ) -> list[LowEngagementSection]:
         """Identify sections where engagement drops below threshold."""
         if not timeline:
@@ -358,8 +375,74 @@ class TribeProcessor:
                             modality=weakest[0],
                             score=float(np.mean([s for s in combined[int(start_t):int(end_t) + 1]])),
                             transcript=transcript,
+                            video_duration=duration,
                         )
                     )
                 in_low = False
 
         return low_sections
+
+    def _attach_section_screenshots(
+        self,
+        video_path: str,
+        sections: list[LowEngagementSection],
+        duration: float,
+    ) -> list[LowEngagementSection]:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            logger.warning("ffmpeg not found; skipping screenshot capture for low-engagement sections.")
+            return sections
+
+        screenshot_dir = settings.upload_dir / "screenshots"
+        screenshot_dir.mkdir(parents=True, exist_ok=True)
+        video_id = Path(video_path).stem
+
+        for index, section in enumerate(sections):
+            capture_time = min(
+                max((section.start_time + section.end_time) / 2.0, 0.0),
+                max(duration - 0.1, 0.0),
+            )
+            output_path = screenshot_dir / (
+                f"{video_id}-{index:02d}-{int(round(section.start_time * 10)):05d}-"
+                f"{int(round(section.end_time * 10)):05d}.jpg"
+            )
+            cmd = [
+                ffmpeg_path,
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                f"{capture_time:.3f}",
+                "-i",
+                video_path,
+                "-frames:v",
+                "1",
+                "-q:v",
+                "2",
+                str(output_path),
+            ]
+            try:
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                logger.warning(
+                    "Failed to capture screenshot for section %.1f-%.1f: %s",
+                    section.start_time,
+                    section.end_time,
+                    exc.stderr.strip(),
+                )
+                continue
+
+            if output_path.exists():
+                rel_path = output_path.relative_to(settings.upload_dir).as_posix()
+                section.screenshot_url = f"/uploads/{rel_path}"
+                section.screenshot_time = capture_time
+                section.video_duration = duration
+
+        return sections
