@@ -202,13 +202,10 @@ function CorticalSurface({
   const rightOffset: [number, number, number] =
     layoutMode === "open" ? [0.98, 0.02, 0] : [0, 0, 0];
   const leftRotation: [number, number, number] =
-    layoutMode === "open" ? [0, 1.72, 0.03] : [0, 0, 0];
+    layoutMode === "open" ? [0, 1.72 + Math.PI / 2, 0.03] : [0, 0, 0];
   const rightRotation: [number, number, number] =
-    layoutMode === "open" ? [0, -1.72, -0.03] : [0, 0, 0];
-  const brainRotation: [number, number, number] =
-    layoutMode === "open"
-      ? [-Math.PI / 2, 0.12, 0]
-      : [-Math.PI / 2, 0.12 + Math.PI / 2, 0];
+    layoutMode === "open" ? [0, -1.72 - Math.PI / 2, -0.03] : [0, 0, 0];
+  const brainRotation: [number, number, number] = [-Math.PI / 2, 0.12, 0];
 
   return (
     <group rotation={brainRotation} position={[0, -0.05, 0]} scale={0.275}>
