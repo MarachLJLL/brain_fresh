@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import VideoUpload from "./components/VideoUpload";
 import LoadingScreen from "./components/LoadingScreen";
 import VideoPlayer from "./components/VideoPlayer";
@@ -13,11 +13,13 @@ import {
   getAnalysisResult,
   getVideoUrl,
 } from "./services/api";
+import { generateMockAnalysis, generateMockFeedback } from "./utils/mockAnalysis";
 import type {
   AnalysisResult,
   AppState,
   LowEngagementSection,
   ProcessingStatus,
+  TimelinePoint,
 } from "./types";
 
 export default function App() {
@@ -31,6 +33,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [selectedSection, setSelectedSection] =
     useState<LowEngagementSection | null>(null);
+  const [demoVideoUrl, setDemoVideoUrl] = useState<string | null>(null);
 
   const { videoRef, currentTime, duration, isPlaying, seekTo, togglePlay } =
     useVideoSync();
@@ -87,14 +90,51 @@ export default function App() {
   );
 
   const handleNewVideo = useCallback(() => {
+    if (demoVideoUrl) URL.revokeObjectURL(demoVideoUrl);
+    setDemoVideoUrl(null);
     setAppState("upload");
     setAnalysis(null);
     setVideoId("");
     setSelectedSection(null);
+  }, [demoVideoUrl]);
+
+  const handleDemoUpload = useCallback(async (file: File) => {
+    const url = URL.createObjectURL(file);
+    setDemoVideoUrl(url);
+    setVideoId("demo");
+
+    let dur = 90;
+    try {
+      const vid = document.createElement("video");
+      vid.preload = "metadata";
+      vid.src = url;
+      dur = await new Promise<number>((resolve) => {
+        vid.onloadedmetadata = () => resolve(vid.duration || 90);
+        setTimeout(() => resolve(90), 3000);
+      });
+    } catch { /* use default 90s */ }
+
+    setAnalysis(generateMockAnalysis(Math.round(dur)));
+    setAppState("results");
   }, []);
 
   const brainActivations = analysis?.brain_activations ?? [];
   const showResults = appState === "results" && analysis !== null;
+  const videoSrc = demoVideoUrl ?? getVideoUrl(videoId);
+
+  const currentTimelineDrives = useMemo(() => {
+    if (!analysis?.timeline?.length) return undefined;
+    // Don't drive brain glow until the user has started playing
+    if (currentTime <= 0 && !isPlaying) return undefined;
+    let closest: TimelinePoint | null = null;
+    let minDist = Infinity;
+    for (const pt of analysis.timeline) {
+      const d = Math.abs(pt.time - currentTime);
+      if (d < minDist) { minDist = d; closest = pt; }
+    }
+    if (!closest) return undefined;
+    return { visual: closest.visual, audio: closest.audio, text: closest.text };
+  }, [analysis, currentTime, isPlaying]);
 
   const handleImportAnalysisJson = (data: AnalysisResult) => {
     setAnalysis({ ...data, video_id: videoId });
@@ -121,14 +161,17 @@ export default function App() {
         <div style={styles.topRow}>
           <div style={styles.videoCol}>
             {appState === "upload" && (
-              <VideoUpload embedded onUpload={handleUpload} />
+              <>
+                <VideoUpload embedded onUpload={handleUpload} />
+                <DemoSection onDemoFile={handleDemoUpload} />
+              </>
             )}
             {appState === "processing" &&
               (videoId ? (
                 <div style={styles.processingWrap}>
                   <VideoPlayer
                     ref={videoRef}
-                    src={getVideoUrl(videoId)}
+                    src={videoSrc}
                     isPlaying={isPlaying}
                     currentTime={currentTime}
                     duration={duration}
@@ -154,7 +197,7 @@ export default function App() {
             {showResults && (
               <VideoPlayer
                 ref={videoRef}
-                src={getVideoUrl(videoId)}
+                src={videoSrc}
                 isPlaying={isPlaying}
                 currentTime={currentTime}
                 duration={duration}
@@ -166,6 +209,7 @@ export default function App() {
             <BrainModel
               activations={brainActivations}
               currentTime={currentTime}
+              timelineDrives={currentTimelineDrives}
             />
           </div>
         </div>
@@ -194,10 +238,84 @@ export default function App() {
         section={selectedSection}
         onClose={() => setSelectedSection(null)}
         onSeek={seekTo}
+        getFeedbackOverride={demoVideoUrl ? generateMockFeedback : undefined}
       />
     </div>
   );
 }
+
+function DemoSection({ onDemoFile }: { onDemoFile: (file: File) => void }) {
+  return (
+    <div style={demoStyles.container}>
+      <div style={demoStyles.divider}>
+        <span style={demoStyles.dividerLine} />
+        <span style={demoStyles.dividerText}>or try demo mode</span>
+        <span style={demoStyles.dividerLine} />
+      </div>
+      <p style={demoStyles.hint}>
+        Pick any video file to see a simulated analysis — no backend needed.
+      </p>
+      <label style={demoStyles.button}>
+        Demo with your video
+        <input
+          type="file"
+          accept="video/*"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onDemoFile(f);
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+const demoStyles: Record<string, React.CSSProperties> = {
+  container: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "0.75rem",
+    marginTop: "1.25rem",
+  },
+  divider: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem",
+    width: "100%",
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    background: "#333",
+  },
+  dividerText: {
+    fontSize: "0.78rem",
+    color: "#555",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    whiteSpace: "nowrap",
+  },
+  hint: {
+    fontSize: "0.82rem",
+    color: "#777",
+    textAlign: "center",
+    lineHeight: 1.4,
+    margin: 0,
+  },
+  button: {
+    padding: "0.6rem 1.5rem",
+    background: "rgba(139, 92, 246, 0.12)",
+    border: "1.5px solid rgba(139, 92, 246, 0.4)",
+    borderRadius: 8,
+    color: "#c4b5fd",
+    fontSize: "0.9rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "all 0.15s",
+  },
+};
 
 const styles: Record<string, React.CSSProperties> = {
   layout: {

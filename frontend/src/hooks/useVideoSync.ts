@@ -1,46 +1,64 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export function useVideoSync() {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+
+  // Callback ref: React calls this when the <video> mounts/unmounts,
+  // which triggers the effect below to attach/detach listeners.
+  const videoRef = useCallback((node: HTMLVideoElement | null) => {
+    setVideoEl(node);
+  }, []);
+
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+    if (!videoEl) return;
 
-    const onTimeUpdate = () => setCurrentTime(video.currentTime);
-    const onDurationChange = () => setDuration(video.duration);
+    const onTimeUpdate = () => setCurrentTime(videoEl.currentTime);
+    const onDuration = () => {
+      if (videoEl.duration && isFinite(videoEl.duration)) {
+        setDuration(videoEl.duration);
+      }
+    };
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
 
-    video.addEventListener("timeupdate", onTimeUpdate);
-    video.addEventListener("durationchange", onDurationChange);
-    video.addEventListener("play", onPlay);
-    video.addEventListener("pause", onPause);
+    videoEl.addEventListener("timeupdate", onTimeUpdate);
+    videoEl.addEventListener("durationchange", onDuration);
+    videoEl.addEventListener("loadedmetadata", onDuration);
+    videoEl.addEventListener("play", onPlay);
+    videoEl.addEventListener("pause", onPause);
+
+    // Sync initial values if media is already loaded
+    if (videoEl.duration && isFinite(videoEl.duration)) {
+      setDuration(videoEl.duration);
+    }
+    setCurrentTime(videoEl.currentTime);
+    setIsPlaying(!videoEl.paused);
 
     return () => {
-      video.removeEventListener("timeupdate", onTimeUpdate);
-      video.removeEventListener("durationchange", onDurationChange);
-      video.removeEventListener("play", onPlay);
-      video.removeEventListener("pause", onPause);
+      videoEl.removeEventListener("timeupdate", onTimeUpdate);
+      videoEl.removeEventListener("durationchange", onDuration);
+      videoEl.removeEventListener("loadedmetadata", onDuration);
+      videoEl.removeEventListener("play", onPlay);
+      videoEl.removeEventListener("pause", onPause);
     };
-  }, []);
+  }, [videoEl]);
 
-  const seekTo = useCallback((time: number) => {
-    const video = videoRef.current;
-    if (video) {
-      video.currentTime = time;
-    }
-  }, []);
+  const seekTo = useCallback(
+    (time: number) => {
+      if (videoEl) videoEl.currentTime = time;
+    },
+    [videoEl]
+  );
 
   const togglePlay = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.paused) video.play();
-    else video.pause();
-  }, []);
+    if (!videoEl) return;
+    if (videoEl.paused) videoEl.play();
+    else videoEl.pause();
+  }, [videoEl]);
 
   return { videoRef, currentTime, duration, isPlaying, seekTo, togglePlay };
 }

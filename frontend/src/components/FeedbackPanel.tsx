@@ -8,6 +8,8 @@ interface Props {
   section: LowEngagementSection | null;
   onClose: () => void;
   onSeek: (time: number) => void;
+  /** When provided, bypasses the API and uses this for feedback (demo mode). */
+  getFeedbackOverride?: (section: LowEngagementSection) => Promise<FeedbackResponse>;
 }
 
 export default function FeedbackPanel({
@@ -15,6 +17,7 @@ export default function FeedbackPanel({
   section,
   onClose,
   onSeek,
+  getFeedbackOverride,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackResponse | null>(null);
@@ -25,21 +28,23 @@ export default function FeedbackPanel({
     setLoading(true);
     setError(null);
     try {
-      const result = await getFeedback({
-        video_id: videoId,
-        section_start: section.start_time,
-        section_end: section.end_time,
-        transcript: section.transcript,
-        modality: section.modality,
-        score: section.score,
-      });
+      const result = getFeedbackOverride
+        ? await getFeedbackOverride(section)
+        : await getFeedback({
+            video_id: videoId,
+            section_start: section.start_time,
+            section_end: section.end_time,
+            transcript: section.transcript,
+            modality: section.modality,
+            score: section.score,
+          });
       setFeedback(result);
     } catch (e: any) {
       setError(e.message || "Failed to get feedback");
     } finally {
       setLoading(false);
     }
-  }, [section, videoId]);
+  }, [section, videoId, getFeedbackOverride]);
 
   useEffect(() => {
     if (section) {

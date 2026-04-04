@@ -21,9 +21,17 @@ interface ModalityMapData {
 
 type Modality = "visual" | "text" | "audio" | null;
 
+interface ModalityDrives {
+  visual: number;
+  audio: number;
+  text: number;
+}
+
 interface Props {
   activations: BrainActivation[];
   currentTime: number;
+  /** When provided, brain regions auto-glow proportionally (from timeline data). */
+  timelineDrives?: ModalityDrives;
 }
 
 const MODALITIES: { key: Modality & string; label: string; hint: string; color: string }[] = [
@@ -32,7 +40,7 @@ const MODALITIES: { key: Modality & string; label: string; hint: string; color: 
   { key: "text", label: "Text", hint: "Frontal / language network", color: "#2266ff" },
 ];
 
-export default function BrainModel({ activations, currentTime }: Props) {
+export default function BrainModel({ activations, currentTime, timelineDrives }: Props) {
   const [active, setActive] = useState<Modality>(null);
   const [locked, setLocked] = useState(false);
 
@@ -100,6 +108,7 @@ export default function BrainModel({ activations, currentTime }: Props) {
             activations={activations}
             currentTime={currentTime}
             active={active}
+            timelineDrives={timelineDrives}
           />
           <OrbitControls
             enableZoom
@@ -147,10 +156,11 @@ function useBrainGeometry(
 }
 
 function CorticalBrain({
-  activations, currentTime, active,
+  activations, currentTime, active, timelineDrives,
 }: {
   activations: BrainActivation[]; currentTime: number;
   active: Modality;
+  timelineDrives?: ModalityDrives;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
 
@@ -186,27 +196,40 @@ function CorticalBrain({
     const verts = closest?.vertices;
     const nAct = verts?.length ?? 0;
 
-    const vis = active === "visual" ? 1 : 0;
-    const aud = active === "audio" ? 1 : 0;
-    const txt = active === "text" ? 1 : 0;
-    const STRENGTH = 5.0;
+    const hasManual = active !== null;
+    const drives = timelineDrives ?? { visual: 0, audio: 0, text: 0 };
+    const hasDrives = !hasManual && (drives.visual + drives.audio + drives.text) > 0.01;
+    const MANUAL_STRENGTH = 5.0;
+    const AUTO_STRENGTH = 3.0;
 
     for (let i = 0; i < n; i++) {
-      const baseBright = active ? 0.18 : 0.55;
+      const baseBright = hasManual ? 0.18 : hasDrives ? 0.28 : 0.55;
       let r = baseBright, g = baseBright, b = baseBright;
 
+      // Per-vertex activation brightness
+      let actValue = 0.5;
       if (verts && nAct > 0) {
         const ai = Math.min(nAct - 1, Math.floor(((i + 0.5) / n) * nAct));
-        const v = Math.max(0, Math.min(1, (verts[ai] + 1) / 2));
-        const brightness = 0.35 + v * 0.65;
+        actValue = Math.max(0, Math.min(1, (verts[ai] + 1) / 2));
+        const brightness = 0.35 + actValue * 0.65;
         r *= brightness;
         g *= brightness;
         b *= brightness;
       }
 
-      r += visualMask[i] * vis * STRENGTH;
-      g += audioMask[i] * aud * STRENGTH;
-      b += textMask[i] * txt * STRENGTH;
+      // Modality glow — modulated by per-vertex activation so individual
+      // voxels drive how bright each region appears.
+      const glowMod = 0.3 + actValue * 0.7;
+
+      if (hasManual) {
+        r += visualMask[i] * (active === "visual" ? 1 : 0) * MANUAL_STRENGTH;
+        g += audioMask[i] * (active === "audio" ? 1 : 0) * MANUAL_STRENGTH;
+        b += textMask[i] * (active === "text" ? 1 : 0) * MANUAL_STRENGTH;
+      } else if (hasDrives) {
+        r += visualMask[i] * drives.visual * AUTO_STRENGTH * glowMod;
+        g += audioMask[i] * drives.audio * AUTO_STRENGTH * glowMod;
+        b += textMask[i] * drives.text * AUTO_STRENGTH * glowMod;
+      }
 
       colors[i * 3] = r;
       colors[i * 3 + 1] = g;
@@ -215,7 +238,7 @@ function CorticalBrain({
 
     const attr = geometry.getAttribute("color") as THREE.BufferAttribute;
     attr.needsUpdate = true;
-  }, [brainGeo, activations, currentTime, active]);
+  }, [brainGeo, activations, currentTime, active, timelineDrives]);
 
   useFrame((_, delta) => {
     if (meshRef.current) {
@@ -230,9 +253,9 @@ function CorticalBrain({
       <mesh ref={meshRef} geometry={brainGeo.geometry} castShadow receiveShadow>
         <meshStandardMaterial
           vertexColors
-          roughness={active ? 0.22 : 0.42}
+          roughness={(active || timelineDrives) ? 0.22 : 0.42}
           metalness={0.04}
-          envMapIntensity={active ? 1.1 : 0.8}
+          envMapIntensity={(active || timelineDrives) ? 1.1 : 0.8}
           side={THREE.DoubleSide}
           toneMapped={false}
         />
