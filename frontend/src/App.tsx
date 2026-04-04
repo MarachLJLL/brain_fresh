@@ -56,10 +56,12 @@ export default function App() {
         message: "Upload complete. Starting analysis...",
       });
 
+      // Connect WebSocket for real-time progress
       connectProcessingWs(
         video_id,
         (status) => setProcessingStatus(status),
         async () => {
+          // Fetch full results when processing completes
           const result = await getAnalysisResult(video_id);
           setAnalysis(result);
           setAppState("results");
@@ -118,6 +120,11 @@ export default function App() {
     setAppState("results");
   }, []);
 
+  const handleImportAnalysisJson = useCallback((data: AnalysisResult) => {
+    setAnalysis({ ...data, video_id: videoId });
+    setAppState("results");
+  }, [videoId]);
+
   const brainActivations = analysis?.brain_activations ?? [];
   const showResults = appState === "results" && analysis !== null;
   const videoSrc = demoVideoUrl ?? getVideoUrl(videoId);
@@ -136,11 +143,6 @@ export default function App() {
     return { visual: closest.visual, audio: closest.audio, text: closest.text };
   }, [analysis, currentTime, isPlaying]);
 
-  const handleImportAnalysisJson = (data: AnalysisResult) => {
-    setAnalysis({ ...data, video_id: videoId });
-    setAppState("results");
-  };
-
   return (
     <div style={styles.layout}>
       <div
@@ -158,6 +160,7 @@ export default function App() {
           )}
         </header>
 
+        {/* Video + Brain model row */}
         <div style={styles.topRow}>
           <div style={styles.videoCol}>
             {appState === "upload" && (
@@ -233,6 +236,7 @@ export default function App() {
         )}
       </div>
 
+      {/* Feedback side panel */}
       <FeedbackPanel
         videoId={videoId}
         section={selectedSection}
@@ -355,7 +359,6 @@ const styles: Record<string, React.CSSProperties> = {
     gridTemplateColumns: "2fr 1fr",
     gap: "1rem",
     marginBottom: "1rem",
-    alignItems: "start",
   },
   videoCol: {
     minWidth: 0,
