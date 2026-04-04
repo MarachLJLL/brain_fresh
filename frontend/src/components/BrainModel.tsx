@@ -1,160 +1,274 @@
-import { useRef, useMemo, useEffect } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { useRef, useMemo, useEffect, useState } from "react";
+import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { OrbitControls, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import type { BrainActivation } from "../types";
+import { FileLoader } from "three";
+
+interface BrainMeshData {
+  vertices: number[];
+  indices: number[];
+  lhCount: number;
+  vertexCount: number;
+  faceCount: number;
+}
+
+type Modality = "visual" | "text" | "audio" | null;
 
 interface Props {
   activations: BrainActivation[];
   currentTime: number;
 }
 
+const MODALITIES: { key: Modality & string; label: string; hint: string; color: string }[] = [
+  { key: "visual", label: "Visual", hint: "Occipital cortex", color: "#ff2020" },
+  { key: "audio", label: "Audio", hint: "Auditory cortex", color: "#00ee44" },
+  { key: "text", label: "Text", hint: "Language network", color: "#2266ff" },
+];
+
 export default function BrainModel({ activations, currentTime }: Props) {
+  const [active, setActive] = useState<Modality>(null);
+  const [locked, setLocked] = useState(false);
+
+  const handleClick = (m: Modality & string) => {
+    if (locked && active === m) {
+      setLocked(false);
+      setActive(null);
+    } else {
+      setLocked(true);
+      setActive(m);
+    }
+  };
+
+  const handleHover = (m: Modality & string) => {
+    if (!locked) setActive(m);
+  };
+
+  const handleLeave = () => {
+    if (!locked) setActive(null);
+  };
+
   return (
     <div style={styles.container}>
       <h3 style={styles.title}>Brain Activation</h3>
+      <div style={styles.buttonRow}>
+        {MODALITIES.map((m) => (
+          <button
+            key={m.key}
+            type="button"
+            onClick={() => handleClick(m.key)}
+            onMouseEnter={() => handleHover(m.key)}
+            onMouseLeave={handleLeave}
+            style={{
+              ...styles.modButton,
+              borderColor: active === m.key ? m.color : "#333",
+              background: active === m.key ? `${m.color}18` : "rgba(255,255,255,0.03)",
+              boxShadow: active === m.key ? `0 0 12px ${m.color}44` : "none",
+            }}
+          >
+            <span style={{ ...styles.modDot, background: m.color }} />
+            <span style={{
+              ...styles.modLabel,
+              color: active === m.key ? m.color : "#999",
+            }}>
+              {m.label}
+            </span>
+            <span style={styles.modHint}>{m.hint}</span>
+          </button>
+        ))}
+      </div>
       <div style={styles.canvasWrap}>
-        <Canvas camera={{ position: [0, 0, 2.5], fov: 50 }}>
-          <ambientLight intensity={0.4} />
-          <directionalLight position={[5, 5, 5]} intensity={0.8} />
-          <directionalLight position={[-3, -3, 2]} intensity={0.3} />
-          <BrainMesh activations={activations} currentTime={currentTime} />
+        <Canvas
+          camera={{ position: [0, 0.1, 4.0], fov: 42 }}
+          dpr={[1, 2]}
+          gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
+        >
+          <color attach="background" args={["#06060c"]} />
+          <ambientLight intensity={0.35} />
+          <directionalLight position={[6, 5, 7]} intensity={1.1} />
+          <directionalLight position={[-5, 3, -4]} intensity={0.55} />
+          <directionalLight position={[0, -6, 2]} intensity={0.2} />
+          <pointLight position={[0, 2.2, 3.2]} intensity={0.3} distance={8} decay={2} />
+          <Environment preset="studio" environmentIntensity={0.5} />
+          <CorticalBrain
+            activations={activations}
+            currentTime={currentTime}
+            active={active}
+          />
           <OrbitControls
-            enableZoom={true}
+            enableZoom
             enablePan={false}
-            autoRotate={true}
-            autoRotateSpeed={0.5}
+            autoRotate
+            autoRotateSpeed={0.45}
+            minDistance={1.35}
+            maxDistance={4.5}
+            target={[0, 0.05, 0]}
           />
         </Canvas>
       </div>
-      <div style={styles.legend}>
-        <span style={{ color: "#3b82f6" }}>Low</span>
-        <div style={styles.gradient} />
-        <span style={{ color: "#ef4444" }}>High</span>
-      </div>
+      {locked && (
+        <p style={styles.lockHint}>Click again to deselect</p>
+      )}
     </div>
   );
 }
 
-/**
- * 3D brain mesh using a sphere-based cortical approximation.
- * Vertex colors are driven by the TRIBE v2 activation data,
- * mapped to the brain's folded surface topology.
- */
-function BrainMesh({
-  activations,
-  currentTime,
-}: {
-  activations: BrainActivation[];
-  currentTime: number;
-}) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const colorsRef = useRef<Float32Array | null>(null);
+function gaussLobe(x: number, center: number, sharpness: number): number {
+  const d = x - center;
+  return Math.exp(-sharpness * d * d);
+}
 
-  // Build brain-like geometry by deforming a sphere with cortical folds
-  const geometry = useMemo(() => {
-    const geo = new THREE.SphereGeometry(1, 96, 64);
-    const positions = geo.attributes.position;
+function dist3(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number {
+  const dx = ax - bx, dy = ay - by, dz = az - bz;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
 
-    // Apply cortical fold deformations to make it look brain-like
-    for (let i = 0; i < positions.count; i++) {
-      const x = positions.getX(i);
-      const y = positions.getY(i);
-      const z = positions.getZ(i);
+function gaussDist(d: number, sharpness: number): number {
+  return Math.exp(-sharpness * d * d);
+}
 
-      // Flatten on the medial side (x near 0) to create hemispheric shape
-      const hemisphereScale = 0.85 + 0.15 * Math.abs(x);
+function useBrainGeometry(meshData: BrainMeshData | null) {
+  return useMemo(() => {
+    if (!meshData) return null;
+    const { vertices, indices, lhCount, vertexCount } = meshData;
 
-      // Add sulci (grooves) using layered sine waves
-      const fold1 = Math.sin(x * 8 + y * 6) * 0.03;
-      const fold2 = Math.sin(y * 12 + z * 8) * 0.02;
-      const fold3 = Math.sin(x * 5 + z * 10) * 0.025;
-
-      // Elongate slightly front-to-back
-      const elongate = 1.0 + 0.15 * (1 - y * y);
-
-      const r = Math.sqrt(x * x + y * y + z * z);
-      const scale = hemisphereScale * elongate + fold1 + fold2 + fold3;
-
-      if (r > 0) {
-        positions.setXYZ(
-          i,
-          (x / r) * scale,
-          (y / r) * scale * 0.9,
-          (z / r) * scale * 1.05
-        );
-      }
-    }
-
+    const geo = new THREE.BufferGeometry();
+    const posArr = new Float32Array(vertices);
+    const idxArr = new Uint32Array(indices);
+    geo.setAttribute("position", new THREE.BufferAttribute(posArr, 3));
+    geo.setIndex(new THREE.BufferAttribute(idxArr, 1));
     geo.computeVertexNormals();
 
-    // Initialize vertex colors
-    const colors = new Float32Array(positions.count * 3);
-    for (let i = 0; i < positions.count; i++) {
-      colors[i * 3] = 0.15;
-      colors[i * 3 + 1] = 0.15;
-      colors[i * 3 + 2] = 0.2;
-    }
+    const colors = new Float32Array(vertexCount * 3);
+    colors.fill(0.55);
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    colorsRef.current = colors;
 
-    return geo;
-  }, []);
+    const visualMask = new Float32Array(vertexCount);
+    const audioMask = new Float32Array(vertexCount);
+    const textMask = new Float32Array(vertexCount);
 
-  // Update vertex colors based on current activation data
-  useEffect(() => {
-    if (!activations.length || !colorsRef.current || !meshRef.current) return;
+    for (let i = 0; i < vertexCount; i++) {
+      const px = posArr[i * 3];
+      const py = posArr[i * 3 + 1];
+      const pz = posArr[i * 3 + 2];
+      const isLeft = i < lhCount;
 
-    // Find the closest activation frame to current time
-    let closest = activations[0];
-    let minDist = Infinity;
-    for (const a of activations) {
-      const d = Math.abs(a.time - currentTime);
-      if (d < minDist) {
-        minDist = d;
-        closest = a;
+      // fsaverage5 RAS: X=right, Y=anterior, Z=superior
+      // Visual: occipital pole = posterior = -Y
+      visualMask[i] = Math.max(0, gaussLobe(-py, 0.55, 3.5));
+
+      // Auditory: lateral temporal, bilateral
+      const lateralness = Math.abs(px);
+      const midHeight = 1 - Math.abs(pz - 0.05) * 3;
+      audioMask[i] = Math.max(0,
+        gaussLobe(lateralness, 0.72, 6) *
+        Math.max(0, midHeight) *
+        gaussLobe(-py, -0.1, 1.5)
+      );
+
+      // Language: left perisylvian only
+      if (isLeft) {
+        const broca = gaussDist(dist3(px, py, pz, -0.55, 0.45, 0.25), 4.5);
+        const wernicke = gaussDist(dist3(px, py, pz, -0.65, -0.25, 0.1), 4.5);
+        const angular = gaussDist(dist3(px, py, pz, -0.48, -0.35, 0.40), 5.0);
+        textMask[i] = Math.max(broca, wernicke, angular);
       }
     }
 
-    const colors = colorsRef.current;
-    const vertices = closest.vertices;
-    const numActivation = vertices.length;
-    const numGeoVerts = colors.length / 3;
+    return { geometry: geo, colors, visualMask, audioMask, textMask };
+  }, [meshData]);
+}
 
-    for (let i = 0; i < numGeoVerts; i++) {
-      // Map geometry vertex to activation vertex
-      const ai = Math.floor((i / numGeoVerts) * numActivation);
-      const val = Math.max(0, Math.min(1, (vertices[ai] + 1) / 2)); // map [-1,1] to [0,1]
+function CorticalBrain({
+  activations, currentTime, active,
+}: {
+  activations: BrainActivation[]; currentTime: number;
+  active: Modality;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
 
-      // Color ramp: blue (low) -> purple (mid) -> red/orange (high)
-      if (val < 0.5) {
-        const t = val * 2;
-        colors[i * 3] = 0.1 + t * 0.4;     // R
-        colors[i * 3 + 1] = 0.1 + t * 0.05; // G
-        colors[i * 3 + 2] = 0.4 - t * 0.1;  // B
-      } else {
-        const t = (val - 0.5) * 2;
-        colors[i * 3] = 0.5 + t * 0.5;      // R
-        colors[i * 3 + 1] = 0.15 + t * 0.3;  // G
-        colors[i * 3 + 2] = 0.3 - t * 0.25;  // B
+  const raw = useLoader(FileLoader, "/brain-mesh.json");
+  const meshData: BrainMeshData | null = useMemo(() => {
+    if (!raw) return null;
+    return JSON.parse(raw as string) as BrainMeshData;
+  }, [raw]);
+
+  const brainGeo = useBrainGeometry(meshData);
+
+  useEffect(() => {
+    if (!brainGeo) return;
+    const { colors, geometry, visualMask, audioMask, textMask } = brainGeo;
+    const n = colors.length / 3;
+
+    let closest: BrainActivation | null = null;
+    let minDist = Infinity;
+    if (activations.length) {
+      for (const a of activations) {
+        const d = Math.abs(a.time - currentTime);
+        if (d < minDist) { minDist = d; closest = a; }
       }
+    }
+
+    const verts = closest?.vertices;
+    const nAct = verts?.length ?? 0;
+
+    const vis = active === "visual" ? 1 : 0;
+    const aud = active === "audio" ? 1 : 0;
+    const txt = active === "text" ? 1 : 0;
+    const STRENGTH = 6.0;
+
+    for (let i = 0; i < n; i++) {
+      // Dim base when a modality is active so the glow pops
+      const baseBright = active ? 0.22 : 0.55;
+      let r = baseBright, g = baseBright, b = baseBright;
+
+      if (verts && nAct > 0) {
+        const ai = Math.min(nAct - 1, Math.floor(((i + 0.5) / n) * nAct));
+        const v = Math.max(0, Math.min(1, (verts[ai] + 1) / 2));
+        const brightness = 0.35 + v * 0.65;
+        r *= brightness;
+        g *= brightness;
+        b *= brightness;
+      }
+
+      r += visualMask[i] * vis * STRENGTH;
+      g += audioMask[i] * aud * STRENGTH;
+      b += textMask[i] * txt * STRENGTH;
+
+      colors[i * 3] = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
     }
 
     const attr = geometry.getAttribute("color") as THREE.BufferAttribute;
     attr.needsUpdate = true;
-  }, [activations, currentTime, geometry]);
+  }, [brainGeo, activations, currentTime, active]);
 
-  // Gentle idle rotation
+  // fsaverage5 uses RAS: X=right, Y=anterior, Z=superior.
+  // Three.js screen: Y=up. Tilt the parent group by -90° around X
+  // so brain-Z (superior) maps to screen-Y (up).
+  // Then spinning the mesh around its local Z rotates like a head turning.
   useFrame((_, delta) => {
     if (meshRef.current) {
-      meshRef.current.rotation.y += delta * 0.05;
+      meshRef.current.rotation.z += delta * 0.15;
     }
   });
 
+  if (!brainGeo) return null;
+
   return (
-    <mesh ref={meshRef} geometry={geometry}>
-      <meshPhongMaterial vertexColors shininess={30} />
-    </mesh>
+    <group rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh ref={meshRef} geometry={brainGeo.geometry} castShadow receiveShadow>
+        <meshStandardMaterial
+          vertexColors
+          roughness={active ? 0.22 : 0.42}
+          metalness={0.04}
+          envMapIntensity={active ? 1.1 : 0.8}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
   );
 }
 
@@ -166,32 +280,60 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "1rem",
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
+    alignItems: "stretch",
   },
   title: {
     fontSize: "0.95rem",
     fontWeight: 600,
     color: "#ccc",
-    marginBottom: "0.5rem",
-    alignSelf: "flex-start",
+    marginBottom: "0.65rem",
+  },
+  buttonRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 1fr",
+    gap: "0.5rem",
+    marginBottom: "0.75rem",
+  },
+  modButton: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "0.25rem",
+    padding: "0.55rem 0.4rem",
+    border: "1.5px solid #333",
+    borderRadius: 10,
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+    minWidth: 0,
+  },
+  modDot: {
+    display: "inline-block",
+    width: 10,
+    height: 10,
+    borderRadius: "50%",
+    flexShrink: 0,
+  },
+  modLabel: {
+    fontSize: "0.78rem",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  },
+  modHint: {
+    fontSize: "0.6rem",
+    color: "#555",
+    lineHeight: 1.2,
   },
   canvasWrap: {
     width: "100%",
-    height: 300,
+    height: 420,
     borderRadius: 8,
     overflow: "hidden",
   },
-  legend: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-    marginTop: "0.5rem",
-    fontSize: "0.75rem",
-  },
-  gradient: {
-    width: 80,
-    height: 6,
-    borderRadius: 3,
-    background: "linear-gradient(90deg, #1e3a8a, #7c3aed, #ef4444)",
+  lockHint: {
+    fontSize: "0.65rem",
+    color: "#555",
+    textAlign: "center",
+    marginTop: "0.45rem",
   },
 };
