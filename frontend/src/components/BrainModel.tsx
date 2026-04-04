@@ -13,51 +13,81 @@ interface BrainMeshData {
   faceCount: number;
 }
 
+interface ModalityMapData {
+  visual: number[];
+  audio: number[];
+  text: number[];
+}
+
+type Modality = "visual" | "text" | "audio" | null;
+
 interface Props {
   activations: BrainActivation[];
   currentTime: number;
 }
 
+const MODALITIES: { key: Modality & string; label: string; hint: string; color: string }[] = [
+  { key: "visual", label: "Visual", hint: "Occipital / parietal cortex", color: "#ff2020" },
+  { key: "audio", label: "Audio", hint: "Temporal / insular cortex", color: "#00ee44" },
+  { key: "text", label: "Text", hint: "Frontal / language network", color: "#2266ff" },
+];
+
 export default function BrainModel({ activations, currentTime }: Props) {
-  const [visual, setVisual] = useState(0);
-  const [text, setText] = useState(0);
-  const [audio, setAudio] = useState(0);
+  const [active, setActive] = useState<Modality>(null);
+  const [locked, setLocked] = useState(false);
+
+  const handleClick = (m: Modality & string) => {
+    if (locked && active === m) {
+      setLocked(false);
+      setActive(null);
+    } else {
+      setLocked(true);
+      setActive(m);
+    }
+  };
+
+  const handleHover = (m: Modality & string) => {
+    if (!locked) setActive(m);
+  };
+
+  const handleLeave = () => {
+    if (!locked) setActive(null);
+  };
 
   return (
     <div style={styles.container}>
       <h3 style={styles.title}>Brain Activation</h3>
-      <div style={styles.sliderPanel}>
-        <ModalitySlider
-          label="Visual"
-          hint="Occipital / visual cortex"
-          value={visual}
-          onChange={setVisual}
-          accent="#22d3ee"
-        />
-        <ModalitySlider
-          label="Text"
-          hint="Language network (left-dominant)"
-          value={text}
-          onChange={setText}
-          accent="#c084fc"
-        />
-        <ModalitySlider
-          label="Audio"
-          hint="Auditory cortex (temporal)"
-          value={audio}
-          onChange={setAudio}
-          accent="#fb923c"
-        />
+      <div style={styles.buttonRow}>
+        {MODALITIES.map((m) => (
+          <button
+            key={m.key}
+            type="button"
+            onClick={() => handleClick(m.key)}
+            onMouseEnter={() => handleHover(m.key)}
+            onMouseLeave={handleLeave}
+            style={{
+              ...styles.modButton,
+              borderColor: active === m.key ? m.color : "#333",
+              background: active === m.key ? `${m.color}18` : "rgba(255,255,255,0.03)",
+              boxShadow: active === m.key ? `0 0 12px ${m.color}44` : "none",
+            }}
+          >
+            <span style={{ ...styles.modDot, background: m.color }} />
+            <span style={{
+              ...styles.modLabel,
+              color: active === m.key ? m.color : "#999",
+            }}>
+              {m.label}
+            </span>
+            <span style={styles.modHint}>{m.hint}</span>
+          </button>
+        ))}
       </div>
       <div style={styles.canvasWrap}>
         <Canvas
-          camera={{ position: [0, 0.15, 2.2], fov: 42 }}
+          camera={{ position: [0, 0.1, 4.0], fov: 42 }}
           dpr={[1, 2]}
-          gl={{
-            antialias: true,
-            alpha: false,
-            powerPreference: "high-performance",
-          }}
+          gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
         >
           <color attach="background" args={["#06060c"]} />
           <ambientLight intensity={0.35} />
@@ -66,18 +96,15 @@ export default function BrainModel({ activations, currentTime }: Props) {
           <directionalLight position={[0, -6, 2]} intensity={0.2} />
           <pointLight position={[0, 2.2, 3.2]} intensity={0.3} distance={8} decay={2} />
           <Environment preset="studio" environmentIntensity={0.5} />
-          <HeadSilhouette />
           <CorticalBrain
             activations={activations}
             currentTime={currentTime}
-            visual={visual}
-            text={text}
-            audio={audio}
+            active={active}
           />
           <OrbitControls
-            enableZoom={true}
+            enableZoom
             enablePan={false}
-            autoRotate={true}
+            autoRotate
             autoRotateSpeed={0.45}
             minDistance={1.35}
             maxDistance={4.5}
@@ -85,82 +112,24 @@ export default function BrainModel({ activations, currentTime }: Props) {
           />
         </Canvas>
       </div>
-      <div style={styles.legend}>
-        <span style={{ color: "#ef4444" }}>Video</span>
-        <span style={{ color: "#888", margin: "0 0.2rem" }}>·</span>
-        <span style={{ color: "#22c55e" }}>Audio</span>
-        <span style={{ color: "#888", margin: "0 0.2rem" }}>·</span>
-        <span style={{ color: "#3b82f6" }}>Text</span>
-        <span style={{ color: "#555", margin: "0 0.5rem" }}>|</span>
-        <span style={{ color: "#ccc", fontSize: "0.65rem" }}>Colors blend additively like the TRIBE v2 demo</span>
-      </div>
+      {locked && (
+        <p style={styles.lockHint}>Click again to deselect</p>
+      )}
     </div>
   );
 }
 
-function ModalitySlider({
-  label,
-  hint,
-  value,
-  onChange,
-  accent,
-}: {
-  label: string;
-  hint: string;
-  value: number;
-  onChange: (v: number) => void;
-  accent: string;
-}) {
-  return (
-    <label style={styles.sliderLabel}>
-      <div style={styles.sliderLabelRow}>
-        <span style={{ ...styles.sliderTitle, color: accent }}>{label}</span>
-        <span style={styles.sliderPct}>{Math.round(value * 100)}%</span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        value={Math.round(value * 100)}
-        onChange={(e) => onChange(Number(e.target.value) / 100)}
-        style={{ ...styles.range, accentColor: accent } as React.CSSProperties}
-        aria-label={`${label} input drive`}
-      />
-      <span style={styles.sliderHint}>{hint}</span>
-    </label>
-  );
-}
-
-function HeadSilhouette() {
-  return (
-    <mesh scale={1.28} renderOrder={-1}>
-      <sphereGeometry args={[1, 48, 32]} />
-      <meshBasicMaterial
-        color="#4c4c68"
-        wireframe
-        transparent
-        opacity={0.055}
-        depthWrite={false}
-      />
-    </mesh>
-  );
-}
-
-/**
- * Build a BufferGeometry from the fsaverage5 mesh JSON.
- * Computes per-vertex region masks at construction time so
- * the coloring loop only does cheap lookups.
- */
-function useBrainGeometry(meshData: BrainMeshData | null) {
+function useBrainGeometry(
+  meshData: BrainMeshData | null,
+  modalityMap: ModalityMapData | null
+) {
   return useMemo(() => {
-    if (!meshData) return null;
-
-    const { vertices, indices, lhCount, vertexCount } = meshData;
+    if (!meshData || !modalityMap) return null;
+    const { vertices, indices, vertexCount } = meshData;
 
     const geo = new THREE.BufferGeometry();
     const posArr = new Float32Array(vertices);
     const idxArr = new Uint32Array(indices);
-
     geo.setAttribute("position", new THREE.BufferAttribute(posArr, 3));
     geo.setIndex(new THREE.BufferAttribute(idxArr, 1));
     geo.computeVertexNormals();
@@ -169,104 +138,36 @@ function useBrainGeometry(meshData: BrainMeshData | null) {
     colors.fill(0.55);
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
-    // Pre-compute region masks using fsaverage5 vertex anatomy.
-    // LH = indices 0..lhCount-1, RH = lhCount..vertexCount-1.
-    // Regions are derived from the vertex normal direction (outward from centroid).
-    const visualMask = new Float32Array(vertexCount);
-    const audioMask = new Float32Array(vertexCount);
-    const textMask = new Float32Array(vertexCount);
-
-    const normals = geo.attributes.normal as THREE.BufferAttribute;
-
-    for (let i = 0; i < vertexCount; i++) {
-      const nx = normals.getX(i);
-      const ny = normals.getY(i);
-      const nz = normals.getZ(i);
-      const px = posArr[i * 3];
-      const py = posArr[i * 3 + 1];
-      const pz = posArr[i * 3 + 2];
-
-      const isLeft = i < lhCount;
-
-      // Visual cortex: occipital pole = posterior vertices.
-      // In fsaverage5 after centering, posterior is typically -Y direction.
-      // Use a combination of position and normal for a tight mask.
-      const posteriorness = -py;
-      visualMask[i] = Math.max(0, gaussLobe(posteriorness, 0.55, 3.5));
-
-      // Auditory cortex: superior temporal, lateral.
-      // Lateral = large |px|, roughly at ear-level height, mid-anteroposterior.
-      const lateralness = Math.abs(px);
-      const midHeight = 1 - Math.abs(pz - 0.05) * 3;
-      audioMask[i] = Math.max(
-        0,
-        gaussLobe(lateralness, 0.72, 6) *
-          Math.max(0, midHeight) *
-          gaussLobe(-py, -0.1, 1.5)
-      );
-
-      // Language: left perisylvian (Broca's + Wernicke's + angular gyrus).
-      // Only left hemisphere.
-      if (isLeft) {
-        // Broca's: left inferior frontal (anterior + lateral + slightly inferior)
-        const brocaD = dist3(px, py, pz, -0.55, 0.45, 0.25);
-        const broca = gaussDist(brocaD, 4.5);
-
-        // Wernicke's: left posterior superior temporal
-        const wernickeD = dist3(px, py, pz, -0.65, -0.25, 0.1);
-        const wernicke = gaussDist(wernickeD, 4.5);
-
-        // Angular gyrus: left inferior parietal
-        const angularD = dist3(px, py, pz, -0.48, -0.35, 0.40);
-        const angular = gaussDist(angularD, 5.0);
-
-        textMask[i] = Math.max(broca, wernicke, angular);
-      }
-    }
+    const visualMask = new Float32Array(modalityMap.visual);
+    const audioMask = new Float32Array(modalityMap.audio);
+    const textMask = new Float32Array(modalityMap.text);
 
     return { geometry: geo, colors, visualMask, audioMask, textMask };
-  }, [meshData]);
-}
-
-function gaussLobe(x: number, center: number, sharpness: number): number {
-  const d = x - center;
-  return Math.exp(-sharpness * d * d);
-}
-
-function dist3(
-  ax: number, ay: number, az: number,
-  bx: number, by: number, bz: number
-): number {
-  const dx = ax - bx, dy = ay - by, dz = az - bz;
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-function gaussDist(d: number, sharpness: number): number {
-  return Math.exp(-sharpness * d * d);
+  }, [meshData, modalityMap]);
 }
 
 function CorticalBrain({
-  activations,
-  currentTime,
-  visual,
-  text,
-  audio,
+  activations, currentTime, active,
 }: {
-  activations: BrainActivation[];
-  currentTime: number;
-  visual: number;
-  text: number;
-  audio: number;
+  activations: BrainActivation[]; currentTime: number;
+  active: Modality;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
 
-  const raw = useLoader(FileLoader, "/brain-mesh.json");
-  const meshData: BrainMeshData | null = useMemo(() => {
-    if (!raw) return null;
-    return JSON.parse(raw as string) as BrainMeshData;
-  }, [raw]);
+  const rawMesh = useLoader(FileLoader, "/brain-mesh.json");
+  const rawMap = useLoader(FileLoader, "/brain-modality-map.json");
 
-  const brainGeo = useBrainGeometry(meshData);
+  const meshData: BrainMeshData | null = useMemo(() => {
+    if (!rawMesh) return null;
+    return JSON.parse(rawMesh as string) as BrainMeshData;
+  }, [rawMesh]);
+
+  const modalityMap: ModalityMapData | null = useMemo(() => {
+    if (!rawMap) return null;
+    return JSON.parse(rawMap as string) as ModalityMapData;
+  }, [rawMap]);
+
+  const brainGeo = useBrainGeometry(meshData, modalityMap);
 
   useEffect(() => {
     if (!brainGeo) return;
@@ -285,62 +186,58 @@ function CorticalBrain({
     const verts = closest?.vertices;
     const nAct = verts?.length ?? 0;
 
-    for (let i = 0; i < n; i++) {
-      // Base gray
-      let r = 0.55, g = 0.55, b = 0.55;
+    const vis = active === "visual" ? 1 : 0;
+    const aud = active === "audio" ? 1 : 0;
+    const txt = active === "text" ? 1 : 0;
+    const STRENGTH = 5.0;
 
-      // If we have TRIBE activation data, use it as an overall intensity overlay.
+    for (let i = 0; i < n; i++) {
+      const baseBright = active ? 0.18 : 0.55;
+      let r = baseBright, g = baseBright, b = baseBright;
+
       if (verts && nAct > 0) {
         const ai = Math.min(nAct - 1, Math.floor(((i + 0.5) / n) * nAct));
-        const raw = (verts[ai] + 1) / 2;
-        const v = Math.max(0, Math.min(1, raw));
-        // map activation to brightness modulation
+        const v = Math.max(0, Math.min(1, (verts[ai] + 1) / 2));
         const brightness = 0.35 + v * 0.65;
         r *= brightness;
         g *= brightness;
         b *= brightness;
       }
 
-      // Additive modality glow: Video=R, Audio=G, Text=B (same as TRIBE demo)
-      const strength = 2.0;
-      const rv = visualMask[i] * visual * strength;
-      const ra = audioMask[i] * audio * strength;
-      const rt = textMask[i] * text * strength;
+      r += visualMask[i] * vis * STRENGTH;
+      g += audioMask[i] * aud * STRENGTH;
+      b += textMask[i] * txt * STRENGTH;
 
-      r += rv;
-      g += ra;
-      b += rt;
-
-      colors[i * 3] = Math.min(2.5, r);
-      colors[i * 3 + 1] = Math.min(2.5, g);
-      colors[i * 3 + 2] = Math.min(2.5, b);
+      colors[i * 3] = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
     }
 
     const attr = geometry.getAttribute("color") as THREE.BufferAttribute;
     attr.needsUpdate = true;
-  }, [brainGeo, activations, currentTime, visual, text, audio]);
+  }, [brainGeo, activations, currentTime, active]);
 
   useFrame((_, delta) => {
     if (meshRef.current) {
-      meshRef.current.rotation.z += delta * 0.04;
+      meshRef.current.rotation.z += delta * 0.15;
     }
   });
 
   if (!brainGeo) return null;
 
-  const anyGlow = visual + text + audio > 0.02;
-
   return (
-    <mesh ref={meshRef} geometry={brainGeo.geometry} castShadow receiveShadow>
-      <meshStandardMaterial
-        vertexColors
-        roughness={anyGlow ? 0.3 : 0.42}
-        metalness={0.05}
-        envMapIntensity={anyGlow ? 1.0 : 0.8}
-        side={THREE.DoubleSide}
-        toneMapped={true}
-      />
-    </mesh>
+    <group rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh ref={meshRef} geometry={brainGeo.geometry} castShadow receiveShadow>
+        <meshStandardMaterial
+          vertexColors
+          roughness={active ? 0.22 : 0.42}
+          metalness={0.04}
+          envMapIntensity={active ? 1.1 : 0.8}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
   );
 }
 
@@ -360,44 +257,41 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#ccc",
     marginBottom: "0.65rem",
   },
-  sliderPanel: {
+  buttonRow: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr 1fr",
-    gap: "0.75rem 1rem",
-    marginBottom: "0.85rem",
+    gap: "0.5rem",
+    marginBottom: "0.75rem",
   },
-  sliderLabel: {
+  modButton: {
     display: "flex",
     flexDirection: "column",
-    gap: "0.2rem",
+    alignItems: "center",
+    gap: "0.25rem",
+    padding: "0.55rem 0.4rem",
+    border: "1.5px solid #333",
+    borderRadius: 10,
     cursor: "pointer",
+    transition: "all 0.15s ease",
     minWidth: 0,
   },
-  sliderLabelRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "baseline",
+  modDot: {
+    display: "inline-block",
+    width: 10,
+    height: 10,
+    borderRadius: "50%",
+    flexShrink: 0,
   },
-  sliderTitle: {
+  modLabel: {
     fontSize: "0.78rem",
     fontWeight: 700,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
   },
-  sliderPct: {
-    fontSize: "0.72rem",
-    color: "#666",
-    fontVariantNumeric: "tabular-nums",
-  },
-  range: {
-    width: "100%",
-    height: 6,
-    cursor: "pointer",
-  },
-  sliderHint: {
-    fontSize: "0.65rem",
+  modHint: {
+    fontSize: "0.6rem",
     color: "#555",
-    lineHeight: 1.25,
+    lineHeight: 1.2,
   },
   canvasWrap: {
     width: "100%",
@@ -405,12 +299,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     overflow: "hidden",
   },
-  legend: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "0.35rem",
-    marginTop: "0.65rem",
-    fontSize: "0.72rem",
+  lockHint: {
+    fontSize: "0.65rem",
+    color: "#555",
+    textAlign: "center",
+    marginTop: "0.45rem",
   },
 };
