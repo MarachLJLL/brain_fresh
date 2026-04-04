@@ -259,13 +259,25 @@ class TribeProcessor:
     def _build_brain_activations(
         self, preds_all: np.ndarray, duration: float
     ) -> list[BrainActivation]:
-        """Downsample brain vertex data for transfer to frontend 3D visualization."""
-        n_timesteps = preds_all.shape[0]
-        activations = []
+        """Subsample cortical vertex predictions for the frontend 3D view.
 
-        # Downsample vertices: take every Nth vertex for manageable transfer size
-        # fsaverage5 has 20484 vertices; downsample to ~1000 for the 3D model
-        step = max(1, preds_all.shape[1] // 1000)
+        The released TRIBE v2 checkpoint maps to fsaverage5 (~20k vertices), not raw volume
+        voxels; subsampling only affects visualization payload size.
+        """
+        n_timesteps = preds_all.shape[0]
+        n_vertices = preds_all.shape[1]
+        target = max(256, min(settings.tribe_brain_vertex_target, n_vertices))
+        step = max(1, int(np.ceil(n_vertices / target)))
+        n_out = (n_vertices + step - 1) // step
+        logger.info(
+            "Brain API samples: %d model vertices -> %d (stride %d, target %d)",
+            n_vertices,
+            n_out,
+            step,
+            target,
+        )
+
+        activations = []
 
         for t in range(n_timesteps):
             vertex_data = preds_all[t, ::step]
