@@ -6,65 +6,92 @@ import {
   Loader,
   MessageSquare,
 } from "lucide-react";
-import type { FeedbackResponse, LowEngagementSection } from "../types";
+import type {
+  ActivationSnapshot,
+  FeedbackActivationContext,
+  FeedbackRequest,
+  FeedbackResponse,
+  LowEngagementSection,
+  TimelinePoint,
+} from "../types";
 import { getFeedback } from "../services/api";
 
 interface Props {
   videoId: string;
+  videoSrc: string;
   videoDuration: number;
+  timeline: TimelinePoint[];
   section: LowEngagementSection | null;
   lowSections: LowEngagementSection[];
   onSelectSection: (section: LowEngagementSection) => void;
   onClearSection: () => void;
   onSeek: (time: number) => void;
-  getFeedbackOverride?: (section: LowEngagementSection) => Promise<FeedbackResponse>;
 }
 
 export default function FeedbackPanel({
   videoId,
+  videoSrc,
   videoDuration,
+  timeline,
   section,
   lowSections,
   onSelectSection,
   onClearSection,
   onSeek,
-  getFeedbackOverride,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [contextScreenshotUrl, setContextScreenshotUrl] = useState<string | null>(null);
+  const [contextScreenshotTime, setContextScreenshotTime] = useState<number | null>(null);
 
   const fetchFeedback = useCallback(async () => {
     if (!section) return;
     setLoading(true);
     setError(null);
     try {
-      const result = getFeedbackOverride
-        ? await getFeedbackOverride(section)
-        : await getFeedback({
-            video_id: videoId,
-            section_start: section.start_time,
-            section_end: section.end_time,
-            transcript: section.transcript,
-            modality: section.modality,
-            score: section.score,
-            screenshot_url: section.screenshot_url,
-            screenshot_time: section.screenshot_time,
-            video_duration: section.video_duration ?? videoDuration,
-          });
+      const totalDuration = section.video_duration ?? videoDuration;
+      const captureTime = clampTime(section.start_time, totalDuration);
+      const capturedScreenshot = await captureVideoFrame(videoSrc, captureTime);
+      const screenshotUrl = capturedScreenshot ?? section.screenshot_url ?? null;
+      const screenshotTime = capturedScreenshot
+        ? captureTime
+        : section.screenshot_time ?? captureTime;
+      const activationContext = buildActivationContext(timeline, section);
+      const request: FeedbackRequest = {
+        video_id: videoId,
+        section_start: section.start_time,
+        section_end: section.end_time,
+        transcript: section.transcript,
+        modality: section.modality,
+        score: section.score,
+        screenshot_url: screenshotUrl,
+        screenshot_time: screenshotTime,
+        video_duration: totalDuration,
+        activation_context: activationContext,
+      };
+      setContextScreenshotUrl(screenshotUrl);
+      setContextScreenshotTime(screenshotTime);
+      const result = await getFeedback(request);
       setFeedback(result);
     } catch (e: any) {
       setError(e.message || "Failed to get feedback");
     } finally {
       setLoading(false);
     }
-  }, [getFeedbackOverride, section, videoDuration, videoId]);
+  }, [section, timeline, videoDuration, videoId, videoSrc]);
 
   useEffect(() => {
-    if (section) {
-      setFeedback(null);
-      fetchFeedback();
+    setFeedback(null);
+    setError(null);
+    if (!section) {
+      setContextScreenshotUrl(null);
+      setContextScreenshotTime(null);
+      return;
     }
+    setContextScreenshotUrl(section.screenshot_url ?? null);
+    setContextScreenshotTime(section.screenshot_time ?? null);
+    fetchFeedback();
   }, [section, fetchFeedback]);
 
   return (
@@ -90,6 +117,8 @@ export default function FeedbackPanel({
           <SectionDetail
             section={section}
             videoDuration={videoDuration}
+            screenshotUrl={contextScreenshotUrl}
+            screenshotTime={contextScreenshotTime}
             loading={loading}
             error={error}
             feedback={feedback}
@@ -163,6 +192,8 @@ function SectionList({
 function SectionDetail({
   section,
   videoDuration,
+  screenshotUrl,
+  screenshotTime,
   loading,
   error,
   feedback,
@@ -172,6 +203,8 @@ function SectionDetail({
 }: {
   section: LowEngagementSection;
   videoDuration: number;
+  screenshotUrl: string | null;
+  screenshotTime: number | null;
   loading: boolean;
   error: string | null;
   feedback: FeedbackResponse | null;
@@ -200,18 +233,18 @@ function SectionDetail({
         <p style={styles.sectionMeta}>{formatSectionPosition(section, totalDuration)}</p>
       </div>
 
-      {(section.screenshot_url || section.transcript) && (
+      {(screenshotUrl || section.transcript) && (
         <div style={styles.contextGrid}>
-          {section.screenshot_url && (
+          {screenshotUrl && (
             <div style={styles.contextCard}>
               <p style={styles.contextLabel}>
                 Screenshot
-                {section.screenshot_time !== undefined && section.screenshot_time !== null
-                  ? ` at ${fmtTime(section.screenshot_time)}`
+                {screenshotTime !== undefined && screenshotTime !== null
+                  ? ` at ${fmtTime(screenshotTime)}`
                   : ""}
               </p>
               <img
-                src={section.screenshot_url}
+                src={screenshotUrl}
                 alt={`Frame from ${fmtTime(section.start_time)} to ${fmtTime(section.end_time)}`}
                 style={styles.screenshotImage}
               />
@@ -277,6 +310,177 @@ function fmtTime(time: number) {
   const minutes = Math.floor(safe / 60);
   const seconds = Math.floor(safe % 60);
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function clampTime(time: number, duration: number) {
+  const safeTime = Number.isFinite(time) ? Math.max(0, time) : 0;
+  if (!Number.isFinite(duration) || duration <= 0) return safeTime;
+  return Math.min(safeTime, Math.max(0, duration - 0.05));
+}
+
+function buildActivationContext(
+  timeline: TimelinePoint[],
+  section: LowEngagementSection
+): FeedbackActivationContext | null {
+  if (!timeline.length) return null;
+
+  const sectionPoints = timeline.filter(
+    (point) => point.time >= section.start_time && point.time <= section.end_time
+  );
+  const effectiveSectionPoints = sectionPoints.length
+    ? sectionPoints
+    : dedupePoints([
+        closestPoint(timeline, section.start_time),
+        closestPoint(timeline, section.end_time),
+      ]);
+
+  if (!effectiveSectionPoints.length) return null;
+
+  return {
+    sample_count: effectiveSectionPoints.length,
+    section_average: aggregateSnapshot(effectiveSectionPoints, "avg"),
+    overall_average: aggregateSnapshot(timeline, "avg"),
+    section_minimum: aggregateSnapshot(effectiveSectionPoints, "min"),
+    section_maximum: aggregateSnapshot(effectiveSectionPoints, "max"),
+    section_start: snapshotFromPoint(
+      closestPoint(timeline, section.start_time) ?? effectiveSectionPoints[0]
+    ),
+    section_end: snapshotFromPoint(
+      closestPoint(timeline, section.end_time) ??
+        effectiveSectionPoints[effectiveSectionPoints.length - 1]
+    ),
+  };
+}
+
+function dedupePoints(points: Array<TimelinePoint | null>) {
+  const seen = new Set<number>();
+  const out: TimelinePoint[] = [];
+  for (const point of points) {
+    if (!point || seen.has(point.time)) continue;
+    seen.add(point.time);
+    out.push(point);
+  }
+  return out;
+}
+
+function closestPoint(timeline: TimelinePoint[], targetTime: number) {
+  let closest: TimelinePoint | null = null;
+  let minDistance = Infinity;
+
+  for (const point of timeline) {
+    const distance = Math.abs(point.time - targetTime);
+    if (distance < minDistance) {
+      minDistance = distance;
+      closest = point;
+    }
+  }
+
+  return closest;
+}
+
+function snapshotFromPoint(point: TimelinePoint): ActivationSnapshot {
+  return {
+    visual: point.visual,
+    audio: point.audio,
+    text: point.text,
+  };
+}
+
+function aggregateSnapshot(
+  points: TimelinePoint[],
+  mode: "avg" | "min" | "max"
+): ActivationSnapshot {
+  const visualValues = points.map((point) => point.visual);
+  const audioValues = points.map((point) => point.audio);
+  const textValues = points.map((point) => point.text);
+
+  return {
+    visual: aggregateValues(visualValues, mode),
+    audio: aggregateValues(audioValues, mode),
+    text: aggregateValues(textValues, mode),
+  };
+}
+
+function aggregateValues(values: number[], mode: "avg" | "min" | "max") {
+  if (!values.length) return 0;
+  if (mode === "avg") {
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+  if (mode === "min") {
+    return Math.min(...values);
+  }
+  return Math.max(...values);
+}
+
+async function captureVideoFrame(videoSrc: string, time: number): Promise<string | null> {
+  if (!videoSrc) return null;
+
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    let timeoutId = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      video.removeAttribute("src");
+      video.load();
+    };
+
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const drawFrame = () => {
+      if (!video.videoWidth || !video.videoHeight) {
+        finish(null);
+        return;
+      }
+
+      const scale = Math.min(1, 960 / video.videoWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        finish(null);
+        return;
+      }
+
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL("image/jpeg", 0.85));
+      } catch {
+        finish(null);
+      }
+    };
+
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+
+    video.addEventListener("error", () => finish(null), { once: true });
+    video.addEventListener("seeked", drawFrame, { once: true });
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        const targetTime = clampTime(time, video.duration);
+        if (targetTime <= 0.05) {
+          if (video.readyState >= 2) drawFrame();
+          else video.addEventListener("loadeddata", drawFrame, { once: true });
+          return;
+        }
+        video.currentTime = targetTime;
+      },
+      { once: true }
+    );
+
+    timeoutId = window.setTimeout(() => finish(null), 8000);
+    video.src = videoSrc;
+    video.load();
+  });
 }
 
 function formatSectionPosition(section: LowEngagementSection, videoDuration: number) {

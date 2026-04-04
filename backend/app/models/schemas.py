@@ -48,6 +48,22 @@ class LowEngagementSection(BaseModel):
     video_duration: float | None = None
 
 
+class ActivationSnapshot(BaseModel):
+    visual: float
+    audio: float
+    text: float
+
+
+class FeedbackActivationContext(BaseModel):
+    sample_count: int
+    section_average: ActivationSnapshot
+    overall_average: ActivationSnapshot
+    section_minimum: ActivationSnapshot
+    section_maximum: ActivationSnapshot
+    section_start: ActivationSnapshot
+    section_end: ActivationSnapshot
+
+
 class FeedbackRequest(BaseModel):
     video_id: str
     section_start: float
@@ -58,6 +74,7 @@ class FeedbackRequest(BaseModel):
     screenshot_url: str | None = None
     screenshot_time: float | None = None
     video_duration: float | None = None
+    activation_context: FeedbackActivationContext | None = None
 
 
 class FeedbackResponse(BaseModel):

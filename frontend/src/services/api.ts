@@ -1,6 +1,7 @@
 import axios from "axios";
 import type {
   AnalysisResult,
+  FeedbackRequest,
   FeedbackResponse,
   ProcessingStatus,
 } from "../types";
@@ -52,17 +53,7 @@ export async function importAnalysisResult(
   return data;
 }
 
-export async function getFeedback(params: {
-  video_id: string;
-  section_start: number;
-  section_end: number;
-  transcript: string;
-  modality: string;
-  score: number;
-  screenshot_url?: string | null;
-  screenshot_time?: number | null;
-  video_duration?: number | null;
-}): Promise<FeedbackResponse> {
+export async function getFeedback(params: FeedbackRequest): Promise<FeedbackResponse> {
   const { data } = await api.post("/feedback/analyze", params);
   return data;
 }

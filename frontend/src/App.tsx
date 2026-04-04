@@ -13,7 +13,6 @@ import {
   getAnalysisResult,
   getVideoUrl,
 } from "./services/api";
-import { generateMockFeedback } from "./utils/mockAnalysis";
 import type {
   AnalysisResult,
   AppState,
@@ -34,7 +33,6 @@ export default function App() {
   const [selectedSection, setSelectedSection] =
     useState<LowEngagementSection | null>(null);
   const [demoVideoUrl, setDemoVideoUrl] = useState<string | null>(null);
-  const [isRealAnalysis, setIsRealAnalysis] = useState(false);
 
   const { videoRef, currentTime, duration, isPlaying, seekTo, togglePlay } =
     useVideoSync();
@@ -95,7 +93,6 @@ export default function App() {
   const handleNewVideo = useCallback(() => {
     if (demoVideoUrl) URL.revokeObjectURL(demoVideoUrl);
     setDemoVideoUrl(null);
-    setIsRealAnalysis(false);
     setAppState("upload");
     setAnalysis(null);
     setVideoId("");
@@ -113,7 +110,6 @@ export default function App() {
       if (!resp.ok) throw new Error("Failed to load processed analysis");
       const data: AnalysisResult = await resp.json();
       setDemoVideoUrl("/demo/demo-video.mov");
-      setIsRealAnalysis(true);
       setVideoId("preprocessed");
       setAnalysis(data);
       setAppState("results");
@@ -235,13 +231,14 @@ export default function App() {
       {showResults && (
         <FeedbackPanel
           videoId={videoId}
+          videoSrc={videoSrc}
           videoDuration={analysis.duration}
+          timeline={analysis.timeline}
           section={selectedSection}
           lowSections={analysis.low_engagement_sections}
           onSelectSection={handleSectionClick}
           onClearSection={() => setSelectedSection(null)}
           onSeek={seekTo}
-          getFeedbackOverride={demoVideoUrl || isRealAnalysis ? generateMockFeedback : undefined}
         />
       )}
     </div>

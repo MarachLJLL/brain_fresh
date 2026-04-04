@@ -55,6 +55,35 @@ export interface FeedbackResponse {
   suggestions: string[];
 }
 
+export interface ActivationSnapshot {
+  visual: number;
+  audio: number;
+  text: number;
+}
+
+export interface FeedbackActivationContext {
+  sample_count: number;
+  section_average: ActivationSnapshot;
+  overall_average: ActivationSnapshot;
+  section_minimum: ActivationSnapshot;
+  section_maximum: ActivationSnapshot;
+  section_start: ActivationSnapshot;
+  section_end: ActivationSnapshot;
+}
+
+export interface FeedbackRequest {
+  video_id: string;
+  section_start: number;
+  section_end: number;
+  transcript: string;
+  modality: string;
+  score: number;
+  screenshot_url?: string | null;
+  screenshot_time?: number | null;
+  video_duration?: number | null;
+  activation_context?: FeedbackActivationContext | null;
+}
+
 export interface ProcessingStatus {
   status: string;
   progress: number;
