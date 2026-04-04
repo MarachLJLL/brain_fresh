@@ -26,6 +26,17 @@ class BrainActivation(BaseModel):
     vertices: list[float]  # per-vertex activation values (downsampled for transfer)
 
 
+class BrainViewerConfig(BaseModel):
+    mesh: str = "fsaverage5"
+    vertex_count: int
+    left_hemisphere_vertex_count: int
+    predicted_available: bool = True
+    true_available: bool = False
+    supports_open_close: bool = True
+    supports_inflation: bool = True
+    signal_lag_seconds: float = 5.0
+
+
 class LowEngagementSection(BaseModel):
     start_time: float
     end_time: float
@@ -61,5 +72,6 @@ class AnalysisResult(BaseModel):
     duration: float
     timeline: list[TimelinePoint]
     brain_activations: list[BrainActivation]
+    brain_viewer: BrainViewerConfig | None = None
     low_engagement_sections: list[LowEngagementSection]
     transcript_segments: list[dict]  # [{start, end, text}]

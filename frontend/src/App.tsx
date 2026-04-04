@@ -128,7 +128,6 @@ export default function App() {
 
   const currentTimelineDrives = useMemo(() => {
     if (!analysis?.timeline?.length) return undefined;
-    // Don't drive brain glow until the user has started playing
     if (currentTime <= 0 && !isPlaying) return undefined;
     let closest: TimelinePoint | null = null;
     let minDist = Infinity;

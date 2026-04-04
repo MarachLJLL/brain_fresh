@@ -10,6 +10,17 @@ export interface BrainActivation {
   vertices: number[];
 }
 
+export interface BrainViewerConfig {
+  mesh: string;
+  vertex_count: number;
+  left_hemisphere_vertex_count: number;
+  predicted_available: boolean;
+  true_available: boolean;
+  supports_open_close: boolean;
+  supports_inflation: boolean;
+  signal_lag_seconds: number;
+}
+
 export interface LowEngagementSection {
   start_time: number;
   end_time: number;
@@ -32,6 +43,7 @@ export interface AnalysisResult {
   duration: number;
   timeline: TimelinePoint[];
   brain_activations: BrainActivation[];
+  brain_viewer?: BrainViewerConfig | null;
   low_engagement_sections: LowEngagementSection[];
   transcript_segments: TranscriptSegment[];
 }

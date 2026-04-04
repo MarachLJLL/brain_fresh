@@ -10,6 +10,7 @@ from app.config import settings
 from app.models.schemas import (
     AnalysisResult,
     BrainActivation,
+    BrainViewerConfig,
     LowEngagementSection,
     TimelinePoint,
 )
@@ -224,8 +225,25 @@ class TribeProcessor:
             duration=duration,
             timeline=timeline,
             brain_activations=brain_activations,
+            brain_viewer=self._build_brain_viewer_config(preds_all.shape[1]),
             low_engagement_sections=low_sections,
             transcript_segments=transcript_segments,
+        )
+
+    def _build_brain_viewer_config(self, source_vertex_count: int) -> BrainViewerConfig:
+        target = max(256, min(settings.tribe_brain_vertex_target, source_vertex_count))
+        step = max(1, int(np.ceil(source_vertex_count / target)))
+        output_vertex_count = (source_vertex_count + step - 1) // step
+        output_left_count = min((10242 + step - 1) // step, output_vertex_count)
+        return BrainViewerConfig(
+            mesh="fsaverage5",
+            vertex_count=output_vertex_count,
+            left_hemisphere_vertex_count=output_left_count,
+            predicted_available=True,
+            true_available=False,
+            supports_open_close=True,
+            supports_inflation=True,
+            signal_lag_seconds=5.0,
         )
 
     def _build_timeline(
