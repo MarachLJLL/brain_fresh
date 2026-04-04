@@ -150,7 +150,18 @@ function useBrainGeometry(
     const audioMask = new Float32Array(modalityMap.audio);
     const textMask = new Float32Array(modalityMap.text);
 
-    return { geometry: geo, colors, visualMask, audioMask, textMask };
+    // Build vertex adjacency from face indices for color diffusion
+    const adjSets: Set<number>[] = new Array(vertexCount);
+    for (let i = 0; i < vertexCount; i++) adjSets[i] = new Set();
+    for (let f = 0; f < indices.length; f += 3) {
+      const a = indices[f], b = indices[f + 1], c = indices[f + 2];
+      adjSets[a].add(b); adjSets[a].add(c);
+      adjSets[b].add(a); adjSets[b].add(c);
+      adjSets[c].add(a); adjSets[c].add(b);
+    }
+    const adjacency = adjSets.map(s => Array.from(s));
+
+    return { geometry: geo, colors, visualMask, audioMask, textMask, adjacency };
   }, [meshData, modalityMap]);
 }
 
@@ -180,7 +191,7 @@ function CorticalBrain({
 
   useEffect(() => {
     if (!brainGeo) return;
-    const { colors, geometry, visualMask, audioMask, textMask } = brainGeo;
+    const { colors, geometry, visualMask, audioMask, textMask, adjacency } = brainGeo;
     const n = colors.length / 3;
 
     let closest: BrainActivation | null = null;
@@ -198,60 +209,108 @@ function CorticalBrain({
     const hasManual = active !== null;
     const drives = timelineDrives ?? { visual: 0, audio: 0, text: 0 };
     const hasDrives = !hasManual && (drives.visual + drives.audio + drives.text) > 0.01;
-    const MANUAL_STRENGTH = 5.0;
 
-    // Raise drive to a power so low engagement stays nearly gray and only
-    // high engagement produces saturated color.  drive^2.2 maps:
-    //   0.2 → 0.03   (barely tinted)
-    //   0.5 → 0.22   (gentle color)
-    //   0.8 → 0.62   (vivid)
-    //   1.0 → 1.0    (full saturation)
-    const GAMMA = 2.2;
-    const MAX_AUTO = 4.0;
-    const visAuto = Math.pow(Math.max(0, drives.visual), GAMMA) * MAX_AUTO;
-    const audAuto = Math.pow(Math.max(0, drives.audio), GAMMA) * MAX_AUTO;
-    const txtAuto = Math.pow(Math.max(0, drives.text), GAMMA) * MAX_AUTO;
+    const ACT_THRESHOLD = 0.5;
+    const ACT_RANGE = 1.0 - ACT_THRESHOLD;
+    const MANUAL_STRENGTH = 4.0;
+    const AUTO_STRENGTH = 5.0;
+    const BASE_DIM = 0.10;
+    const CONTRAST = 2.0;
+
+    // Read vertex positions for spatial noise
+    const posAttr = geometry.getAttribute("position") as THREE.BufferAttribute;
+    const pos = posAttr.array as Float32Array;
 
     for (let i = 0; i < n; i++) {
-      // Per-vertex activation brightness
-      let actValue = 0.5;
+      // --- Interpolated activation from sparse vertex array ---
+      let rawAct = 0;
       if (verts && nAct > 0) {
-        const ai = Math.min(nAct - 1, Math.floor(((i + 0.5) / n) * nAct));
-        actValue = Math.max(0, Math.min(1, (verts[ai] + 1) / 2));
+        const t = ((i + 0.5) / n) * nAct - 0.5;
+        const lo = Math.max(0, Math.floor(t));
+        const hi = Math.min(nAct - 1, lo + 1);
+        const frac = t - lo;
+        rawAct = verts[lo] * (1 - frac) + verts[hi] * frac;
       }
-      const glowMod = 0.3 + actValue * 0.7;
-      const actBright = 0.35 + actValue * 0.65;
 
-      // Compute per-channel modality intensity for this vertex
-      let visI = 0, audI = 0, txtI = 0;
+      // Per-vertex spatial noise from 3D position (deterministic hash).
+      // This breaks up the uniform patches so adjacent vertices differ.
+      const px = pos[i * 3], py = pos[i * 3 + 1], pz = pos[i * 3 + 2];
+      const h1 = Math.sin(px * 73.17 + py * 119.43 + pz * 157.29) * 43758.5453;
+      const noise = (h1 - Math.floor(h1)) * 2 - 1; // [-1, 1]
+      rawAct += noise * 0.12;
+
+      const isActive = rawAct > ACT_THRESHOLD;
+      // Apply contrast curve to spread brightness values
+      const voxelBright = isActive
+        ? Math.pow(Math.max(0, (rawAct - ACT_THRESHOLD) / ACT_RANGE), 1 / CONTRAST)
+        : 0;
+
+      const isVis = visualMask[i] > 0.5;
+      const isAud = audioMask[i] > 0.5;
+      const isTxt = textMask[i] > 0.5;
+      const inRegion = isVis || isAud || isTxt;
+
+      let r = 0, g = 0, b = 0;
+
       if (hasManual) {
-        visI = visualMask[i] * (active === "visual" ? 1 : 0) * MANUAL_STRENGTH;
-        audI = audioMask[i] * (active === "audio" ? 1 : 0) * MANUAL_STRENGTH;
-        txtI = textMask[i] * (active === "text" ? 1 : 0) * MANUAL_STRENGTH;
-      } else if (hasDrives) {
-        visI = visualMask[i] * visAuto * glowMod;
-        audI = audioMask[i] * audAuto * glowMod;
-        txtI = textMask[i] * txtAuto * glowMod;
+        const show = (active === "visual" && isVis)
+                  || (active === "audio" && isAud)
+                  || (active === "text" && isTxt);
+        if (show && isActive) {
+          const intensity = voxelBright * MANUAL_STRENGTH;
+          if (active === "visual") r = intensity;
+          else if (active === "audio") g = intensity;
+          else b = intensity;
+          const sat = Math.min(1, intensity * 0.5);
+          const gray = (1 - sat) * BASE_DIM;
+          r += gray; g += gray; b += gray;
+        } else {
+          r = g = b = BASE_DIM;
+        }
+      } else if (hasDrives && inRegion && isActive) {
+        const GAMMA = 1.4;
+        const visGlow = isVis ? voxelBright * Math.pow(Math.max(0, drives.visual), GAMMA) * AUTO_STRENGTH : 0;
+        const audGlow = isAud ? voxelBright * Math.pow(Math.max(0, drives.audio), GAMMA) * AUTO_STRENGTH : 0;
+        const txtGlow = isTxt ? voxelBright * Math.pow(Math.max(0, drives.text), GAMMA) * AUTO_STRENGTH : 0;
+        const totalGlow = visGlow + audGlow + txtGlow;
+
+        const sat = Math.min(1, totalGlow * 0.5);
+        const gray = (1 - sat) * 0.15;
+        r = gray + visGlow;
+        g = gray + audGlow;
+        b = gray + txtGlow;
+      } else {
+        r = g = b = hasDrives ? BASE_DIM : 0.45;
       }
 
-      // Total modality signal at this vertex (0 = no glow, >0 = colored)
-      const totalGlow = visI + audI + txtI;
+      colors[i * 3]     = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
+    }
 
-      if (totalGlow > 0.01) {
-        // Blend from gray toward pure modality color based on glow strength.
-        // At high glow the base gray is fully replaced → pure red/green/blue.
-        const saturation = Math.min(1, totalGlow * 0.6);
-        const gray = (1 - saturation) * 0.35 * actBright;
-        colors[i * 3]     = gray + visI;   // R: visual = red
-        colors[i * 3 + 1] = gray + audI;   // G: audio  = green
-        colors[i * 3 + 2] = gray + txtI;   // B: text   = blue
-      } else {
-        // Inactive vertex — neutral gray modulated by activation
-        const baseBright = hasManual ? 0.18 : hasDrives ? 0.35 : 0.55;
-        const v = baseBright * actBright;
-        colors[i * 3]     = v;
-        colors[i * 3 + 1] = v;
-        colors[i * 3 + 2] = v;
+    // Diffusion passes: bright voxels bleed color into neighbors along the
+    // mesh surface, creating soft halos around activation hot spots.
+    const DIFFUSION_PASSES = 4;
+    const DIFFUSION_PULL = 0.3;
+    for (let pass = 0; pass < DIFFUSION_PASSES; pass++) {
+      const prev = new Float32Array(colors);
+      for (let i = 0; i < n; i++) {
+        const nb = adjacency[i];
+        if (!nb.length) continue;
+        // Find the brightest neighbor per channel
+        let maxR = 0, maxG = 0, maxB = 0;
+        for (let k = 0; k < nb.length; k++) {
+          const ni = nb[k];
+          const nr = prev[ni * 3], ng = prev[ni * 3 + 1], nb2 = prev[ni * 3 + 2];
+          if (nr > maxR) maxR = nr;
+          if (ng > maxG) maxG = ng;
+          if (nb2 > maxB) maxB = nb2;
+        }
+        // Pull this vertex toward its brightest neighbor (only brightens, never dims)
+        const cr = prev[i * 3], cg = prev[i * 3 + 1], cb = prev[i * 3 + 2];
+        if (maxR > cr) colors[i * 3]     = cr + (maxR - cr) * DIFFUSION_PULL;
+        if (maxG > cg) colors[i * 3 + 1] = cg + (maxG - cg) * DIFFUSION_PULL;
+        if (maxB > cb) colors[i * 3 + 2] = cb + (maxB - cb) * DIFFUSION_PULL;
       }
     }
 
