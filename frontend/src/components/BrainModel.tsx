@@ -1,5 +1,5 @@
 import { useRef, useMemo, useEffect, useState } from "react";
-import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { Canvas, useLoader } from "@react-three/fiber";
 import { OrbitControls, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import type { BrainActivation } from "../types";
@@ -113,8 +113,7 @@ export default function BrainModel({ activations, currentTime, timelineDrives }:
           <OrbitControls
             enableZoom
             enablePan={false}
-            autoRotate
-            autoRotateSpeed={0.45}
+            autoRotate={false}
             minDistance={1.35}
             maxDistance={4.5}
             target={[0, 0.05, 0]}
@@ -151,7 +150,18 @@ function useBrainGeometry(
     const audioMask = new Float32Array(modalityMap.audio);
     const textMask = new Float32Array(modalityMap.text);
 
-    return { geometry: geo, colors, visualMask, audioMask, textMask };
+    // Build vertex adjacency from face indices for color diffusion
+    const adjSets: Set<number>[] = new Array(vertexCount);
+    for (let i = 0; i < vertexCount; i++) adjSets[i] = new Set();
+    for (let f = 0; f < indices.length; f += 3) {
+      const a = indices[f], b = indices[f + 1], c = indices[f + 2];
+      adjSets[a].add(b); adjSets[a].add(c);
+      adjSets[b].add(a); adjSets[b].add(c);
+      adjSets[c].add(a); adjSets[c].add(b);
+    }
+    const adjacency = adjSets.map(s => Array.from(s));
+
+    return { geometry: geo, colors, visualMask, audioMask, textMask, adjacency };
   }, [meshData, modalityMap]);
 }
 
@@ -181,7 +191,7 @@ function CorticalBrain({
 
   useEffect(() => {
     if (!brainGeo) return;
-    const { colors, geometry, visualMask, audioMask, textMask } = brainGeo;
+    const { colors, geometry, visualMask, audioMask, textMask, adjacency } = brainGeo;
     const n = colors.length / 3;
 
     let closest: BrainActivation | null = null;
@@ -199,52 +209,116 @@ function CorticalBrain({
     const hasManual = active !== null;
     const drives = timelineDrives ?? { visual: 0, audio: 0, text: 0 };
     const hasDrives = !hasManual && (drives.visual + drives.audio + drives.text) > 0.01;
-    const MANUAL_STRENGTH = 5.0;
-    const AUTO_STRENGTH = 3.0;
+
+    const ACT_THRESHOLD = 0.5;
+    const ACT_RANGE = 1.0 - ACT_THRESHOLD;
+    const MANUAL_STRENGTH = 4.0;
+    const AUTO_STRENGTH = 5.0;
+    const BASE_DIM = 0.10;
+    const CONTRAST = 2.0;
+
+    // Read vertex positions for spatial noise
+    const posAttr = geometry.getAttribute("position") as THREE.BufferAttribute;
+    const pos = posAttr.array as Float32Array;
 
     for (let i = 0; i < n; i++) {
-      const baseBright = hasManual ? 0.18 : hasDrives ? 0.28 : 0.55;
-      let r = baseBright, g = baseBright, b = baseBright;
-
-      // Per-vertex activation brightness
-      let actValue = 0.5;
+      // --- Interpolated activation from sparse vertex array ---
+      let rawAct = 0;
       if (verts && nAct > 0) {
-        const ai = Math.min(nAct - 1, Math.floor(((i + 0.5) / n) * nAct));
-        actValue = Math.max(0, Math.min(1, (verts[ai] + 1) / 2));
-        const brightness = 0.35 + actValue * 0.65;
-        r *= brightness;
-        g *= brightness;
-        b *= brightness;
+        const t = ((i + 0.5) / n) * nAct - 0.5;
+        const lo = Math.max(0, Math.floor(t));
+        const hi = Math.min(nAct - 1, lo + 1);
+        const frac = t - lo;
+        rawAct = verts[lo] * (1 - frac) + verts[hi] * frac;
       }
 
-      // Modality glow — modulated by per-vertex activation so individual
-      // voxels drive how bright each region appears.
-      const glowMod = 0.3 + actValue * 0.7;
+      // Per-vertex spatial noise from 3D position (deterministic hash).
+      // This breaks up the uniform patches so adjacent vertices differ.
+      const px = pos[i * 3], py = pos[i * 3 + 1], pz = pos[i * 3 + 2];
+      const h1 = Math.sin(px * 73.17 + py * 119.43 + pz * 157.29) * 43758.5453;
+      const noise = (h1 - Math.floor(h1)) * 2 - 1; // [-1, 1]
+      rawAct += noise * 0.12;
+
+      const isActive = rawAct > ACT_THRESHOLD;
+      // Apply contrast curve to spread brightness values
+      const voxelBright = isActive
+        ? Math.pow(Math.max(0, (rawAct - ACT_THRESHOLD) / ACT_RANGE), 1 / CONTRAST)
+        : 0;
+
+      const isVis = visualMask[i] > 0.5;
+      const isAud = audioMask[i] > 0.5;
+      const isTxt = textMask[i] > 0.5;
+      const inRegion = isVis || isAud || isTxt;
+
+      let r = 0, g = 0, b = 0;
 
       if (hasManual) {
-        r += visualMask[i] * (active === "visual" ? 1 : 0) * MANUAL_STRENGTH;
-        g += audioMask[i] * (active === "audio" ? 1 : 0) * MANUAL_STRENGTH;
-        b += textMask[i] * (active === "text" ? 1 : 0) * MANUAL_STRENGTH;
-      } else if (hasDrives) {
-        r += visualMask[i] * drives.visual * AUTO_STRENGTH * glowMod;
-        g += audioMask[i] * drives.audio * AUTO_STRENGTH * glowMod;
-        b += textMask[i] * drives.text * AUTO_STRENGTH * glowMod;
+        const show = (active === "visual" && isVis)
+                  || (active === "audio" && isAud)
+                  || (active === "text" && isTxt);
+        if (show && isActive) {
+          const intensity = voxelBright * MANUAL_STRENGTH;
+          if (active === "visual") r = intensity;
+          else if (active === "audio") g = intensity;
+          else b = intensity;
+          const sat = Math.min(1, intensity * 0.5);
+          const gray = (1 - sat) * BASE_DIM;
+          r += gray; g += gray; b += gray;
+        } else {
+          r = g = b = BASE_DIM;
+        }
+      } else if (hasDrives && inRegion && isActive) {
+        const GAMMA = 1.4;
+        const visGlow = isVis ? voxelBright * Math.pow(Math.max(0, drives.visual), GAMMA) * AUTO_STRENGTH : 0;
+        const audGlow = isAud ? voxelBright * Math.pow(Math.max(0, drives.audio), GAMMA) * AUTO_STRENGTH : 0;
+        const txtGlow = isTxt ? voxelBright * Math.pow(Math.max(0, drives.text), GAMMA) * AUTO_STRENGTH : 0;
+        const totalGlow = visGlow + audGlow + txtGlow;
+
+        const sat = Math.min(1, totalGlow * 0.5);
+        const gray = (1 - sat) * 0.15;
+        r = gray + visGlow;
+        g = gray + audGlow;
+        b = gray + txtGlow;
+      } else {
+        r = g = b = hasDrives ? BASE_DIM : 0.45;
       }
 
-      colors[i * 3] = r;
+      colors[i * 3]     = r;
       colors[i * 3 + 1] = g;
       colors[i * 3 + 2] = b;
+    }
+
+    // Diffusion passes: bright voxels bleed color into neighbors along the
+    // mesh surface, creating soft halos around activation hot spots.
+    const DIFFUSION_PASSES = 4;
+    const DIFFUSION_PULL = 0.3;
+    for (let pass = 0; pass < DIFFUSION_PASSES; pass++) {
+      const prev = new Float32Array(colors);
+      for (let i = 0; i < n; i++) {
+        const nb = adjacency[i];
+        if (!nb.length) continue;
+        // Find the brightest neighbor per channel
+        let maxR = 0, maxG = 0, maxB = 0;
+        for (let k = 0; k < nb.length; k++) {
+          const ni = nb[k];
+          const nr = prev[ni * 3], ng = prev[ni * 3 + 1], nb2 = prev[ni * 3 + 2];
+          if (nr > maxR) maxR = nr;
+          if (ng > maxG) maxG = ng;
+          if (nb2 > maxB) maxB = nb2;
+        }
+        // Pull this vertex toward its brightest neighbor (only brightens, never dims)
+        const cr = prev[i * 3], cg = prev[i * 3 + 1], cb = prev[i * 3 + 2];
+        if (maxR > cr) colors[i * 3]     = cr + (maxR - cr) * DIFFUSION_PULL;
+        if (maxG > cg) colors[i * 3 + 1] = cg + (maxG - cg) * DIFFUSION_PULL;
+        if (maxB > cb) colors[i * 3 + 2] = cb + (maxB - cb) * DIFFUSION_PULL;
+      }
     }
 
     const attr = geometry.getAttribute("color") as THREE.BufferAttribute;
     attr.needsUpdate = true;
   }, [brainGeo, activations, currentTime, active, timelineDrives]);
 
-  useFrame((_, delta) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.z += delta * 0.15;
-    }
-  });
+  // No auto-rotation — user drags to rotate via OrbitControls
 
   if (!brainGeo) return null;
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import VideoUpload from "./components/VideoUpload";
 import LoadingScreen from "./components/LoadingScreen";
 import VideoPlayer from "./components/VideoPlayer";
@@ -34,6 +34,7 @@ export default function App() {
   const [selectedSection, setSelectedSection] =
     useState<LowEngagementSection | null>(null);
   const [demoVideoUrl, setDemoVideoUrl] = useState<string | null>(null);
+  const [isRealAnalysis, setIsRealAnalysis] = useState(false);
 
   const { videoRef, currentTime, duration, isPlaying, seekTo, togglePlay } =
     useVideoSync();
@@ -94,6 +95,7 @@ export default function App() {
   const handleNewVideo = useCallback(() => {
     if (demoVideoUrl) URL.revokeObjectURL(demoVideoUrl);
     setDemoVideoUrl(null);
+    setIsRealAnalysis(false);
     setAppState("upload");
     setAnalysis(null);
     setVideoId("");
@@ -125,6 +127,30 @@ export default function App() {
     setAppState("results");
   }, [videoId]);
 
+  const handleImportAnalysis = useCallback(async (videoFile: File, analysisJson: AnalysisResult) => {
+    const url = URL.createObjectURL(videoFile);
+    setDemoVideoUrl(url);
+    setIsRealAnalysis(true);
+    setVideoId("imported");
+    setAnalysis(analysisJson);
+    setAppState("results");
+  }, []);
+
+  const handleLoadPreprocessed = useCallback(async () => {
+    try {
+      const resp = await fetch("/demo/analysis_processed.json");
+      if (!resp.ok) throw new Error("Failed to load processed analysis");
+      const data: AnalysisResult = await resp.json();
+      setDemoVideoUrl("/demo/demo-video.mov");
+      setIsRealAnalysis(true);
+      setVideoId("preprocessed");
+      setAnalysis(data);
+      setAppState("results");
+    } catch (e: any) {
+      console.error("Failed to load preprocessed demo:", e);
+    }
+  }, []);
+
   const brainActivations = analysis?.brain_activations ?? [];
   const showResults = appState === "results" && analysis !== null;
   const videoSrc = demoVideoUrl ?? getVideoUrl(videoId);
@@ -148,7 +174,7 @@ export default function App() {
       <div
         style={{
           ...styles.main,
-          marginRight: selectedSection ? 420 : 0,
+          marginRight: showResults ? 390 : 0,
         }}
       >
         <header style={styles.header}>
@@ -166,6 +192,10 @@ export default function App() {
             {appState === "upload" && (
               <>
                 <VideoUpload embedded onUpload={handleUpload} />
+                <ImportSection
+                  onImport={handleImportAnalysis}
+                  onLoadPreprocessed={handleLoadPreprocessed}
+                />
                 <DemoSection onDemoFile={handleDemoUpload} />
               </>
             )}
@@ -236,17 +266,194 @@ export default function App() {
         )}
       </div>
 
-      {/* Feedback side panel */}
-      <FeedbackPanel
-        videoId={videoId}
-        section={selectedSection}
-        onClose={() => setSelectedSection(null)}
-        onSeek={seekTo}
-        getFeedbackOverride={demoVideoUrl ? generateMockFeedback : undefined}
-      />
+      {showResults && (
+        <FeedbackPanel
+          videoId={videoId}
+          section={selectedSection}
+          lowSections={analysis.low_engagement_sections}
+          onSelectSection={handleSectionClick}
+          onClearSection={() => setSelectedSection(null)}
+          onSeek={seekTo}
+          getFeedbackOverride={demoVideoUrl || isRealAnalysis ? generateMockFeedback : undefined}
+        />
+      )}
     </div>
   );
 }
+
+function ImportSection({
+  onImport,
+  onLoadPreprocessed,
+}: {
+  onImport: (videoFile: File, analysisJson: AnalysisResult) => void;
+  onLoadPreprocessed: () => void;
+}) {
+  const videoFileRef = useRef<HTMLInputElement>(null);
+  const jsonFileRef = useRef<HTMLInputElement>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [jsonFile, setJsonFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleGo = useCallback(async () => {
+    if (!videoFile || !jsonFile) return;
+    setError(null);
+    try {
+      const text = await jsonFile.text();
+      const data = JSON.parse(text) as AnalysisResult;
+      if (!data.timeline || !data.brain_activations) {
+        throw new Error("Invalid analysis JSON — missing timeline or brain_activations");
+      }
+      onImport(videoFile, data);
+    } catch (e: any) {
+      setError(e.message || "Failed to parse analysis JSON");
+    }
+  }, [videoFile, jsonFile, onImport]);
+
+  return (
+    <div style={importStyles.container}>
+      <div style={importStyles.divider}>
+        <span style={importStyles.dividerLine} />
+        <span style={importStyles.dividerText}>or load processed analysis</span>
+        <span style={importStyles.dividerLine} />
+      </div>
+
+      <button type="button" onClick={onLoadPreprocessed} style={importStyles.preloadBtn}>
+        Load Pre-processed Demo (TRIBE v2 output)
+      </button>
+
+      <p style={importStyles.hint}>
+        Or import your own: pick a video file and its processed analysis JSON
+        (generated by <code style={{ color: "#c4b5fd" }}>process_analysis.py</code>).
+      </p>
+
+      <div style={importStyles.fileRow}>
+        <div style={importStyles.filePickWrap}>
+          <label style={importStyles.filePick}>
+            {videoFile ? `✓ ${videoFile.name.slice(0, 24)}` : "Select Video"}
+            <input
+              ref={videoFileRef}
+              type="file"
+              accept="video/*"
+              style={{ display: "none" }}
+              onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+        </div>
+        <span style={{ color: "#444" }}>+</span>
+        <div style={importStyles.filePickWrap}>
+          <label style={importStyles.filePick}>
+            {jsonFile ? `✓ ${jsonFile.name.slice(0, 24)}` : "Select Analysis JSON"}
+            <input
+              ref={jsonFileRef}
+              type="file"
+              accept=".json,application/json"
+              style={{ display: "none" }}
+              onChange={(e) => setJsonFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+        </div>
+        <button
+          type="button"
+          disabled={!videoFile || !jsonFile}
+          onClick={handleGo}
+          style={{
+            ...importStyles.goBtn,
+            opacity: videoFile && jsonFile ? 1 : 0.35,
+            cursor: videoFile && jsonFile ? "pointer" : "not-allowed",
+          }}
+        >
+          Go
+        </button>
+      </div>
+      {error && <p style={importStyles.error}>{error}</p>}
+    </div>
+  );
+}
+
+const importStyles: Record<string, React.CSSProperties> = {
+  container: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "0.75rem",
+    marginTop: "1.5rem",
+  },
+  divider: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem",
+    width: "100%",
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    background: "#333",
+  },
+  dividerText: {
+    fontSize: "0.78rem",
+    color: "#555",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    whiteSpace: "nowrap",
+  },
+  hint: {
+    fontSize: "0.82rem",
+    color: "#777",
+    textAlign: "center",
+    lineHeight: 1.4,
+    margin: 0,
+  },
+  preloadBtn: {
+    padding: "0.65rem 1.5rem",
+    background: "linear-gradient(135deg, rgba(6, 182, 212, 0.15), rgba(139, 92, 246, 0.15))",
+    border: "1.5px solid rgba(6, 182, 212, 0.5)",
+    borderRadius: 8,
+    color: "#67e8f9",
+    fontSize: "0.9rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "all 0.15s",
+  },
+  fileRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  filePickWrap: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "0.25rem",
+  },
+  filePick: {
+    padding: "0.5rem 1rem",
+    background: "rgba(255,255,255,0.04)",
+    border: "1.5px solid #444",
+    borderRadius: 8,
+    color: "#aaa",
+    fontSize: "0.82rem",
+    cursor: "pointer",
+    transition: "all 0.15s",
+    whiteSpace: "nowrap",
+  },
+  goBtn: {
+    padding: "0.5rem 1.2rem",
+    background: "linear-gradient(135deg, #8b5cf6, #7c3aed)",
+    border: "none",
+    borderRadius: 8,
+    color: "#fff",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    transition: "all 0.15s",
+  },
+  error: {
+    color: "#f87171",
+    fontSize: "0.8rem",
+    margin: 0,
+  },
+};
 
 function DemoSection({ onDemoFile }: { onDemoFile: (file: File) => void }) {
   return (
@@ -356,9 +563,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   topRow: {
     display: "grid",
-    gridTemplateColumns: "2fr 1fr",
+    gridTemplateColumns: "1fr 1fr",
     gap: "1rem",
     marginBottom: "1rem",
+    alignItems: "start",
   },
   videoCol: {
     minWidth: 0,
