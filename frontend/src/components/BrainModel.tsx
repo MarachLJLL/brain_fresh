@@ -1,5 +1,5 @@
 import { useRef, useMemo, useEffect, useState } from "react";
-import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { Canvas, useLoader } from "@react-three/fiber";
 import { OrbitControls, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import type { BrainActivation } from "../types";
@@ -113,8 +113,7 @@ export default function BrainModel({ activations, currentTime, timelineDrives }:
           <OrbitControls
             enableZoom
             enablePan={false}
-            autoRotate
-            autoRotateSpeed={0.45}
+            autoRotate={false}
             minDistance={1.35}
             maxDistance={4.5}
             target={[0, 0.05, 0]}
@@ -214,47 +213,53 @@ function CorticalBrain({
     const txtAuto = Math.pow(Math.max(0, drives.text), GAMMA) * MAX_AUTO;
 
     for (let i = 0; i < n; i++) {
-      // Base gray dims slightly when any modality is active
-      const baseBright = hasManual ? 0.18 : hasDrives ? 0.42 : 0.55;
-      let r = baseBright, g = baseBright, b = baseBright;
-
       // Per-vertex activation brightness
       let actValue = 0.5;
       if (verts && nAct > 0) {
         const ai = Math.min(nAct - 1, Math.floor(((i + 0.5) / n) * nAct));
         actValue = Math.max(0, Math.min(1, (verts[ai] + 1) / 2));
-        const brightness = 0.35 + actValue * 0.65;
-        r *= brightness;
-        g *= brightness;
-        b *= brightness;
       }
-
       const glowMod = 0.3 + actValue * 0.7;
+      const actBright = 0.35 + actValue * 0.65;
 
+      // Compute per-channel modality intensity for this vertex
+      let visI = 0, audI = 0, txtI = 0;
       if (hasManual) {
-        r += visualMask[i] * (active === "visual" ? 1 : 0) * MANUAL_STRENGTH;
-        g += audioMask[i] * (active === "audio" ? 1 : 0) * MANUAL_STRENGTH;
-        b += textMask[i] * (active === "text" ? 1 : 0) * MANUAL_STRENGTH;
+        visI = visualMask[i] * (active === "visual" ? 1 : 0) * MANUAL_STRENGTH;
+        audI = audioMask[i] * (active === "audio" ? 1 : 0) * MANUAL_STRENGTH;
+        txtI = textMask[i] * (active === "text" ? 1 : 0) * MANUAL_STRENGTH;
       } else if (hasDrives) {
-        r += visualMask[i] * visAuto * glowMod;
-        g += audioMask[i] * audAuto * glowMod;
-        b += textMask[i] * txtAuto * glowMod;
+        visI = visualMask[i] * visAuto * glowMod;
+        audI = audioMask[i] * audAuto * glowMod;
+        txtI = textMask[i] * txtAuto * glowMod;
       }
 
-      colors[i * 3] = r;
-      colors[i * 3 + 1] = g;
-      colors[i * 3 + 2] = b;
+      // Total modality signal at this vertex (0 = no glow, >0 = colored)
+      const totalGlow = visI + audI + txtI;
+
+      if (totalGlow > 0.01) {
+        // Blend from gray toward pure modality color based on glow strength.
+        // At high glow the base gray is fully replaced → pure red/green/blue.
+        const saturation = Math.min(1, totalGlow * 0.6);
+        const gray = (1 - saturation) * 0.35 * actBright;
+        colors[i * 3]     = gray + visI;   // R: visual = red
+        colors[i * 3 + 1] = gray + audI;   // G: audio  = green
+        colors[i * 3 + 2] = gray + txtI;   // B: text   = blue
+      } else {
+        // Inactive vertex — neutral gray modulated by activation
+        const baseBright = hasManual ? 0.18 : hasDrives ? 0.35 : 0.55;
+        const v = baseBright * actBright;
+        colors[i * 3]     = v;
+        colors[i * 3 + 1] = v;
+        colors[i * 3 + 2] = v;
+      }
     }
 
     const attr = geometry.getAttribute("color") as THREE.BufferAttribute;
     attr.needsUpdate = true;
   }, [brainGeo, activations, currentTime, active, timelineDrives]);
 
-  useFrame((_, delta) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.z += delta * 0.15;
-    }
-  });
+  // No auto-rotation — user drags to rotate via OrbitControls
 
   if (!brainGeo) return null;
 

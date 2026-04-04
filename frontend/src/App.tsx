@@ -148,7 +148,7 @@ export default function App() {
       <div
         style={{
           ...styles.main,
-          marginRight: selectedSection ? 420 : 0,
+          marginRight: showResults ? 390 : 0,
         }}
       >
         <header style={styles.header}>
@@ -236,14 +236,17 @@ export default function App() {
         )}
       </div>
 
-      {/* Feedback side panel */}
-      <FeedbackPanel
-        videoId={videoId}
-        section={selectedSection}
-        onClose={() => setSelectedSection(null)}
-        onSeek={seekTo}
-        getFeedbackOverride={demoVideoUrl ? generateMockFeedback : undefined}
-      />
+      {showResults && (
+        <FeedbackPanel
+          videoId={videoId}
+          section={selectedSection}
+          lowSections={analysis.low_engagement_sections}
+          onSelectSection={handleSectionClick}
+          onClearSection={() => setSelectedSection(null)}
+          onSeek={seekTo}
+          getFeedbackOverride={demoVideoUrl ? generateMockFeedback : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -356,9 +359,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   topRow: {
     display: "grid",
-    gridTemplateColumns: "2fr 1fr",
+    gridTemplateColumns: "1fr 1fr",
     gap: "1rem",
     marginBottom: "1rem",
+    alignItems: "start",
   },
   videoCol: {
     minWidth: 0,

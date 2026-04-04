@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import { MessageSquare, Loader, X, Lightbulb } from "lucide-react";
+import { MessageSquare, Loader, Lightbulb, ArrowLeft, AlertTriangle } from "lucide-react";
 import type { FeedbackResponse, LowEngagementSection } from "../types";
 import { getFeedback } from "../services/api";
 
 interface Props {
   videoId: string;
   section: LowEngagementSection | null;
-  onClose: () => void;
+  lowSections: LowEngagementSection[];
+  onSelectSection: (section: LowEngagementSection) => void;
+  onClearSection: () => void;
   onSeek: (time: number) => void;
-  /** When provided, bypasses the API and uses this for feedback (demo mode). */
   getFeedbackOverride?: (section: LowEngagementSection) => Promise<FeedbackResponse>;
 }
 
 export default function FeedbackPanel({
   videoId,
   section,
-  onClose,
+  lowSections,
+  onSelectSection,
+  onClearSection,
   onSeek,
   getFeedbackOverride,
 }: Props) {
@@ -53,14 +56,6 @@ export default function FeedbackPanel({
     }
   }, [section, fetchFeedback]);
 
-  if (!section) return null;
-
-  const formatTime = (t: number) => {
-    const m = Math.floor(t / 60);
-    const s = Math.floor(t % 60);
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  };
-
   return (
     <div style={styles.overlay}>
       <div style={styles.panel}>
@@ -69,81 +64,174 @@ export default function FeedbackPanel({
             <MessageSquare size={18} color="#8b5cf6" />
             <h3 style={styles.title}>Engagement Feedback</h3>
           </div>
-          <button onClick={onClose} style={styles.closeBtn}>
-            <X size={18} />
-          </button>
         </div>
 
-        <div style={styles.sectionInfo}>
-          <button
-            onClick={() => onSeek(section.start_time)}
-            style={styles.timeBtn}
-          >
-            {formatTime(section.start_time)} - {formatTime(section.end_time)}
-          </button>
-          <span style={styles.badge}>
-            Low {section.modality} ({(section.score * 100).toFixed(0)}%)
-          </span>
-        </div>
-
-        {section.transcript && (
-          <div style={styles.transcript}>
-            <p style={styles.transcriptLabel}>Transcript:</p>
-            <p style={styles.transcriptText}>"{section.transcript}"</p>
-          </div>
-        )}
-
-        {loading && (
-          <div style={styles.loading}>
-            <Loader
-              size={24}
-              color="#8b5cf6"
-              style={{ animation: "spin 1s linear infinite" }}
-            />
-            <p>Analyzing with Claude...</p>
-            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          </div>
-        )}
-
-        {error && (
-          <div style={styles.error}>
-            <p>{error}</p>
-            <button onClick={fetchFeedback} style={styles.retryBtn}>
-              Retry
-            </button>
-          </div>
-        )}
-
-        {feedback && (
-          <div style={styles.feedbackContent}>
-            <div style={styles.analysis}>
-              <p style={styles.analysisText}>{feedback.feedback}</p>
-            </div>
-
-            <div style={styles.suggestions}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  marginBottom: "0.75rem",
-                }}
-              >
-                <Lightbulb size={16} color="#f59e0b" />
-                <span style={styles.suggestionsTitle}>Suggestions</span>
-              </div>
-              {feedback.suggestions.map((s, i) => (
-                <div key={i} style={styles.suggestion}>
-                  <span style={styles.suggestionNum}>{i + 1}</span>
-                  <p style={styles.suggestionText}>{s}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+        {!section ? (
+          <SectionList
+            sections={lowSections}
+            onSelect={(s) => { onSelectSection(s); onSeek(s.start_time); }}
+          />
+        ) : (
+          <SectionDetail
+            section={section}
+            loading={loading}
+            error={error}
+            feedback={feedback}
+            onBack={onClearSection}
+            onSeek={onSeek}
+            onRetry={fetchFeedback}
+          />
         )}
       </div>
     </div>
   );
+}
+
+function SectionList({
+  sections,
+  onSelect,
+}: {
+  sections: LowEngagementSection[];
+  onSelect: (s: LowEngagementSection) => void;
+}) {
+  if (!sections.length) {
+    return (
+      <p style={styles.emptyHint}>
+        No low-engagement sections detected. Great job!
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <p style={styles.listIntro}>
+        These sections had low engagement. Click one to see detailed feedback
+        and suggestions.
+      </p>
+      <div style={styles.sectionCards}>
+        {sections.map((sec, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onSelect(sec)}
+            style={styles.sectionCard}
+          >
+            <div style={styles.cardRow}>
+              <AlertTriangle size={14} color="#ef4444" />
+              <span style={styles.cardTime}>
+                {fmtTime(sec.start_time)} – {fmtTime(sec.end_time)}
+              </span>
+              <span style={{
+                ...styles.cardBadge,
+                color: modalityColor(sec.modality),
+                borderColor: modalityColor(sec.modality) + "55",
+                background: modalityColor(sec.modality) + "15",
+              }}>
+                {sec.modality} {Math.round(sec.score * 100)}%
+              </span>
+            </div>
+            {sec.transcript && (
+              <p style={styles.cardTranscript}>"{sec.transcript.slice(0, 80)}{sec.transcript.length > 80 ? "…" : ""}"</p>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SectionDetail({
+  section,
+  loading,
+  error,
+  feedback,
+  onBack,
+  onSeek,
+  onRetry,
+}: {
+  section: LowEngagementSection;
+  loading: boolean;
+  error: string | null;
+  feedback: FeedbackResponse | null;
+  onBack: () => void;
+  onSeek: (t: number) => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div>
+      <button type="button" onClick={onBack} style={styles.backBtn}>
+        <ArrowLeft size={14} />
+        All sections
+      </button>
+
+      <div style={styles.sectionInfo}>
+        <button onClick={() => onSeek(section.start_time)} style={styles.timeBtn}>
+          {fmtTime(section.start_time)} – {fmtTime(section.end_time)}
+        </button>
+        <span style={styles.badge}>
+          Low {section.modality} ({Math.round(section.score * 100)}%)
+        </span>
+      </div>
+
+      {section.transcript && (
+        <div style={styles.transcript}>
+          <p style={styles.transcriptLabel}>Transcript:</p>
+          <p style={styles.transcriptText}>"{section.transcript}"</p>
+        </div>
+      )}
+
+      {loading && (
+        <div style={styles.loading}>
+          <Loader
+            size={24}
+            color="#8b5cf6"
+            style={{ animation: "spin 1s linear infinite" }}
+          />
+          <p>Analyzing with Claude...</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
+
+      {error && (
+        <div style={styles.error}>
+          <p>{error}</p>
+          <button onClick={onRetry} style={styles.retryBtn}>Retry</button>
+        </div>
+      )}
+
+      {feedback && (
+        <div style={styles.feedbackContent}>
+          <div style={styles.analysis}>
+            <p style={styles.analysisText}>{feedback.feedback}</p>
+          </div>
+          <div style={styles.suggestions}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
+              <Lightbulb size={16} color="#f59e0b" />
+              <span style={styles.suggestionsTitle}>Suggestions</span>
+            </div>
+            {feedback.suggestions.map((s, i) => (
+              <div key={i} style={styles.suggestion}>
+                <span style={styles.suggestionNum}>{i + 1}</span>
+                <p style={styles.suggestionText}>{s}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtTime(t: number) {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function modalityColor(m: string) {
+  if (m === "visual") return "#f97316";
+  if (m === "text") return "#22c55e";
+  return "#3b82f6";
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -152,7 +240,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: 0,
     right: 0,
     bottom: 0,
-    width: 420,
+    width: 380,
     background: "#0d0d14",
     borderLeft: "1px solid #222",
     zIndex: 100,
@@ -160,7 +248,7 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: "-4px 0 20px rgba(0,0,0,0.5)",
   },
   panel: {
-    padding: "1.5rem",
+    padding: "1.25rem",
   },
   header: {
     display: "flex",
@@ -173,12 +261,74 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: "#e0e0e0",
   },
-  closeBtn: {
+  listIntro: {
+    fontSize: "0.82rem",
+    color: "#888",
+    lineHeight: 1.5,
+    marginBottom: "1rem",
+  },
+  emptyHint: {
+    fontSize: "0.88rem",
+    color: "#555",
+    fontStyle: "italic",
+    textAlign: "center",
+    padding: "2rem 0",
+  },
+  sectionCards: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.6rem",
+  },
+  sectionCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.4rem",
+    padding: "0.75rem 0.85rem",
+    background: "rgba(255,255,255,0.03)",
+    border: "1px solid #2a2a3e",
+    borderRadius: 10,
+    cursor: "pointer",
+    textAlign: "left",
+    transition: "border-color 0.15s, background 0.15s",
+  },
+  cardRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+  },
+  cardTime: {
+    fontSize: "0.82rem",
+    color: "#c4b5fd",
+    fontFamily: "monospace",
+  },
+  cardBadge: {
+    fontSize: "0.7rem",
+    fontWeight: 600,
+    textTransform: "uppercase",
+    padding: "0.15rem 0.4rem",
+    borderRadius: 4,
+    border: "1px solid",
+    marginLeft: "auto",
+  },
+  cardTranscript: {
+    fontSize: "0.75rem",
+    color: "#666",
+    lineHeight: 1.4,
+    fontStyle: "italic",
+    margin: 0,
+  },
+  backBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.35rem",
     background: "none",
     border: "none",
-    color: "#666",
+    color: "#8b5cf6",
+    fontSize: "0.82rem",
+    fontWeight: 500,
     cursor: "pointer",
-    padding: 4,
+    padding: "0.25rem 0",
+    marginBottom: "0.75rem",
   },
   sectionInfo: {
     display: "flex",
