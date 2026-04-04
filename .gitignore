@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env
+backend/.env
+
+# Uploads & cache
+backend/uploads/*
+!backend/uploads/.gitkeep
+model_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
