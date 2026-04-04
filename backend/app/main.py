@@ -1,5 +1,9 @@
 import logging
 
+from app.torch_compat import apply_torch_compat
+
+apply_torch_compat()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

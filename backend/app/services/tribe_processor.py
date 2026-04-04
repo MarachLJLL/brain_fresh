@@ -29,6 +29,40 @@ def _tribe_inference_device() -> str:
     return "cpu"
 
 
+def _merge_tribe_config_update(extra: dict | None) -> dict | None:
+    """facebook/tribev2 config.yaml hardcodes device: cuda for neuralset extractors; override when CUDA is not used.
+
+    neuralset only allows auto|cpu|cuda|accelerate — not mps. For TRIBE_DEVICE=mps, extractors run on CPU while the
+    brain model still uses MPS via TribeModel.from_pretrained(..., device=...).
+    """
+    import torch
+
+    target = _tribe_inference_device()
+    if target == "cuda" and torch.cuda.is_available():
+        return dict(extra) if extra else None
+
+    if target == "mps":
+        ns_device = "cpu"
+        logger.info(
+            "Neuralset extractors do not support device=mps in config; using cpu for text/audio/image/video features "
+            "(brain model remains on mps)."
+        )
+    elif target == "cuda" and not torch.cuda.is_available():
+        ns_device = "cpu"
+    else:
+        ns_device = target
+
+    overrides = {
+        "data.text_feature.device": ns_device,
+        "data.audio_feature.device": ns_device,
+        "data.image_feature.image.device": ns_device,
+        "data.video_feature.image.device": ns_device,
+    }
+    if not extra:
+        return overrides
+    return {**overrides, **extra}
+
+
 # Region masks for fsaverage5 (20484 vertices total, 10242 per hemisphere).
 # These index ranges approximate the major functional regions based on the HCP parcellation.
 # Visual cortex: V1-V4, MT complex (roughly posterior occipital vertices)
@@ -66,7 +100,14 @@ class TribeProcessor:
             return
 
         def _load():
+            import torch
             from tribev2.demo_utils import TribeModel
+
+            if not torch.version.cuda:
+                logger.info(
+                    "PyTorch was built without CUDA (normal on macOS). "
+                    "TRIBE_DEVICE=auto uses Apple MPS when available, else CPU — not NVIDIA CUDA."
+                )
 
             device = _tribe_inference_device()
             logger.info("TRIBE v2 inference device: %s", device)
@@ -76,6 +117,7 @@ class TribeProcessor:
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
                 device=device,
+                config_update=_merge_tribe_config_update(None),
             )
 
             logger.info("Loading TRIBE v2 video-only model...")
@@ -83,7 +125,9 @@ class TribeProcessor:
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
                 device=device,
-                config_update={"data.features_to_mask": ["text", "audio"]},
+                config_update=_merge_tribe_config_update(
+                    {"data.features_to_mask": ["text", "audio"]}
+                ),
             )
 
             logger.info("Loading TRIBE v2 audio-only model...")
@@ -91,7 +135,9 @@ class TribeProcessor:
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
                 device=device,
-                config_update={"data.features_to_mask": ["video", "text"]},
+                config_update=_merge_tribe_config_update(
+                    {"data.features_to_mask": ["video", "text"]}
+                ),
             )
 
             logger.info("Loading TRIBE v2 text-only model...")
@@ -99,7 +145,9 @@ class TribeProcessor:
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
                 device=device,
-                config_update={"data.features_to_mask": ["video", "audio"]},
+                config_update=_merge_tribe_config_update(
+                    {"data.features_to_mask": ["video", "audio"]}
+                ),
             )
 
         await asyncio.to_thread(_load)
