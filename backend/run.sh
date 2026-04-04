@@ -9,5 +9,4 @@ if [ ! -d ".venv" ]; then
     uv pip install -e .
 fi
 
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+exec .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

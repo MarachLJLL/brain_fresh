@@ -55,26 +55,27 @@ class TribeProcessor:
 
             logger.info("Loading TRIBE v2 full model...")
             self._model_all = TribeModel.from_pretrained(
-                settings.tribe_model_id, cache_folder=settings.tribe_cache_dir
+                checkpoint_dir=settings.tribe_model_id,
+                cache_folder=settings.tribe_cache_dir,
             )
 
             logger.info("Loading TRIBE v2 video-only model...")
             self._model_video = TribeModel.from_pretrained(
-                settings.tribe_model_id,
+                checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
                 config_update={"data.features_to_mask": ["text", "audio"]},
             )
 
             logger.info("Loading TRIBE v2 audio-only model...")
             self._model_audio = TribeModel.from_pretrained(
-                settings.tribe_model_id,
+                checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
                 config_update={"data.features_to_mask": ["video", "text"]},
             )
 
             logger.info("Loading TRIBE v2 text-only model...")
             self._model_text = TribeModel.from_pretrained(
-                settings.tribe_model_id,
+                checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
                 config_update={"data.features_to_mask": ["video", "audio"]},
             )
@@ -94,7 +95,9 @@ class TribeProcessor:
             await progress_callback("extracting_features", 10, "Extracting features from video...")
 
         # Build events dataframe (extracts audio, transcribes, builds context)
-        events_df = await asyncio.to_thread(self._model_all.get_events_dataframe, video_path)
+        events_df = await asyncio.to_thread(
+            self._model_all.get_events_dataframe, video_path=video_path
+        )
 
         if progress_callback:
             await progress_callback("predicting", 30, "Running brain predictions (all modalities)...")
