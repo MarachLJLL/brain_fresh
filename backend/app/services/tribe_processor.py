@@ -95,65 +95,58 @@ class TribeProcessor:
             cls._instance = cls()
         return cls._instance
 
-    async def load_models(self, progress_callback=None):
-        """Load TRIBE v2 model variants (full + per-modality ablations)."""
-        if self._models_loaded:
-            return
+    def _load_tribe_variant_sync(
+        self,
+        attr: str,
+        config_extra: dict | None,
+        log_cuda_note: bool,
+    ) -> None:
+        import torch
+        from tribev2.demo_utils import TribeModel
 
-        def _load():
-            import torch
-            from tribev2.demo_utils import TribeModel
-
+        device = _tribe_inference_device()
+        if log_cuda_note:
             if not torch.version.cuda:
                 logger.info(
                     "PyTorch was built without CUDA (normal on macOS). "
                     "TRIBE_DEVICE=auto uses Apple MPS when available, else CPU — not NVIDIA CUDA."
                 )
-
-            device = _tribe_inference_device()
             logger.info("TRIBE v2 inference device: %s", device)
+        logger.info("Loading TRIBE v2 variant → %s", attr)
+        model = TribeModel.from_pretrained(
+            checkpoint_dir=settings.tribe_model_id,
+            cache_folder=settings.tribe_cache_dir,
+            device=device,
+            config_update=_merge_tribe_config_update(config_extra),
+        )
+        setattr(self, attr, model)
 
-            logger.info("Loading TRIBE v2 full model...")
-            self._model_all = TribeModel.from_pretrained(
-                checkpoint_dir=settings.tribe_model_id,
-                cache_folder=settings.tribe_cache_dir,
-                device=device,
-                config_update=_merge_tribe_config_update(None),
-            )
+    async def load_models(self, progress_callback=None):
+        """Load TRIBE v2 model variants (full + per-modality ablations)."""
+        if self._models_loaded:
+            return
 
-            logger.info("Loading TRIBE v2 video-only model...")
-            self._model_video = TribeModel.from_pretrained(
-                checkpoint_dir=settings.tribe_model_id,
-                cache_folder=settings.tribe_cache_dir,
-                device=device,
-                config_update=_merge_tribe_config_update(
-                    {"data.features_to_mask": ["text", "audio"]}
-                ),
-            )
+        # One checkpoint per thread step so UIs can show progress (e.g. Colab tqdm).
+        steps: list[tuple[str, dict | None, str]] = [
+            ("_model_all", None, "full checkpoint"),
+            ("_model_video", {"data.features_to_mask": ["text", "audio"]}, "video-only"),
+            ("_model_audio", {"data.features_to_mask": ["video", "text"]}, "audio-only"),
+            ("_model_text", {"data.features_to_mask": ["video", "audio"]}, "text-only"),
+        ]
+        for i, (attr, extra, label) in enumerate(steps):
+            pct = 1 + i * 2  # 1,3,5,7 — leaves 10+ for process_video
+            if progress_callback:
+                await progress_callback(
+                    "loading_models",
+                    float(pct),
+                    f"Loading TRIBE {label} ({i + 1}/4)…",
+                )
+            await asyncio.to_thread(self._load_tribe_variant_sync, attr, extra, i == 0)
 
-            logger.info("Loading TRIBE v2 audio-only model...")
-            self._model_audio = TribeModel.from_pretrained(
-                checkpoint_dir=settings.tribe_model_id,
-                cache_folder=settings.tribe_cache_dir,
-                device=device,
-                config_update=_merge_tribe_config_update(
-                    {"data.features_to_mask": ["video", "text"]}
-                ),
-            )
-
-            logger.info("Loading TRIBE v2 text-only model...")
-            self._model_text = TribeModel.from_pretrained(
-                checkpoint_dir=settings.tribe_model_id,
-                cache_folder=settings.tribe_cache_dir,
-                device=device,
-                config_update=_merge_tribe_config_update(
-                    {"data.features_to_mask": ["video", "audio"]}
-                ),
-            )
-
-        await asyncio.to_thread(_load)
         self._models_loaded = True
         logger.info("All TRIBE v2 models loaded.")
+        if progress_callback:
+            await progress_callback("loading_models", 9.0, "All TRIBE checkpoints loaded.")
 
     async def process_video(self, video_path: str, progress_callback=None) -> AnalysisResult:
         """Run full analysis pipeline on a video file."""
@@ -277,25 +270,13 @@ class TribeProcessor:
     def _build_brain_activations(
         self, preds_all: np.ndarray, duration: float
     ) -> list[BrainActivation]:
-        """Subsample cortical vertex predictions for the frontend 3D view.
-
-        The released TRIBE v2 checkpoint maps to fsaverage5 (~20k vertices), not raw volume
-        voxels; subsampling only affects visualization payload size.
-        """
+        """Downsample brain vertex data for transfer to frontend 3D visualization."""
         n_timesteps = preds_all.shape[0]
-        n_vertices = preds_all.shape[1]
-        target = max(256, min(settings.tribe_brain_vertex_target, n_vertices))
-        step = max(1, int(np.ceil(n_vertices / target)))
-        n_out = (n_vertices + step - 1) // step
-        logger.info(
-            "Brain API samples: %d model vertices -> %d (stride %d, target %d)",
-            n_vertices,
-            n_out,
-            step,
-            target,
-        )
-
         activations = []
+
+        # Downsample vertices: take every Nth vertex for manageable transfer size
+        # fsaverage5 has 20484 vertices; downsample to ~1000 for the 3D model
+        step = max(1, preds_all.shape[1] // 1000)
 
         for t in range(n_timesteps):
             vertex_data = preds_all[t, ::step]

@@ -2,11 +2,16 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Environment, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { Maximize2, Minimize2 } from "lucide-react";
 import type { BrainActivation } from "../types";
 
-type SurfaceMode = "normal" | "inflated";
 type LayoutMode = "closed" | "open";
+type Modality = "visual" | "text" | "audio" | null;
+
+interface ModalityDrives {
+  visual: number;
+  audio: number;
+  text: number;
+}
 
 interface LegacyMeshData {
   vertices: number[];
@@ -16,13 +21,16 @@ interface LegacyMeshData {
 }
 
 interface SurfaceAssetData {
-  mesh: string;
   vertexCount: number;
   lhCount: number;
   indices: number[];
   pialVertices: number[];
-  inflatedVertices?: number[];
-  sulc?: number[];
+}
+
+interface ModalityMapData {
+  visual: number[];
+  audio: number[];
+  text: number[];
 }
 
 interface BrainGeometryData {
@@ -35,36 +43,44 @@ interface HemisphereGeometryData {
   positionAttr: THREE.BufferAttribute;
   colorAttr: THREE.BufferAttribute;
   pialPositions: Float32Array;
-  inflatedPositions: Float32Array;
-  sulc: Float32Array | null;
-  sulcMin: number;
-  sulcMax: number;
   vertexStart: number;
   vertexCount: number;
   totalVertexCount: number;
+  adjacency: number[][];
 }
 
 interface Props {
   activations: BrainActivation[];
   currentTime: number;
+  timelineDrives?: ModalityDrives;
 }
 
-export default function BrainModel({ activations, currentTime }: Props) {
-  const [expanded, setExpanded] = useState(false);
-  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("normal");
+const MODALITIES: { key: Modality & string; label: string; hint: string; color: string }[] = [
+  { key: "visual", label: "Visual", hint: "Occipital / parietal cortex", color: "#ff2020" },
+  { key: "audio", label: "Audio", hint: "Temporal / insular cortex", color: "#00ee44" },
+  { key: "text", label: "Text", hint: "Frontal / language network", color: "#2266ff" },
+];
+
+export default function BrainModel({ activations, currentTime, timelineDrives }: Props) {
+  const [active, setActive] = useState<Modality>(null);
+  const [locked, setLocked] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("closed");
   const [surfaceAsset, setSurfaceAsset] = useState<SurfaceAssetData | null>(null);
+  const [modalityMap, setModalityMap] = useState<ModalityMapData | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
   const deferredTime = useDeferredValue(currentTime);
 
   useEffect(() => {
     let cancelled = false;
-
     async function load() {
       try {
-        const asset = await loadSurfaceAsset();
+        const [asset, modMap] = await Promise.all([
+          loadSurfaceAsset(),
+          loadModalityMap(),
+        ]);
         if (!cancelled) {
           setSurfaceAsset(asset);
+          setModalityMap(modMap);
           setAssetError(null);
         }
       } catch (error) {
@@ -75,111 +91,126 @@ export default function BrainModel({ activations, currentTime }: Props) {
         }
       }
     }
-
     void load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  const shellStyle = {
-    ...styles.shell,
-    ...(expanded ? styles.shellExpanded : null),
+  const handleClick = (m: Modality & string) => {
+    if (locked && active === m) {
+      setLocked(false);
+      setActive(null);
+    } else {
+      setLocked(true);
+      setActive(m);
+    }
   };
-  const viewportStyle = {
-    ...styles.viewport,
-    ...(expanded ? styles.viewportExpanded : null),
+
+  const handleHover = (m: Modality & string) => {
+    if (!locked) setActive(m);
   };
-  const canvasWrapStyle = {
-    ...styles.canvasWrap,
-    ...(expanded ? styles.canvasWrapExpanded : null),
+
+  const handleLeave = () => {
+    if (!locked) setActive(null);
   };
 
   return (
-    <div style={shellStyle}>
-      <div style={viewportStyle}>
-        <div style={styles.halo} />
-        <div style={styles.topBar}>
+    <div style={styles.container}>
+      <h3 style={styles.title}>Brain Activation</h3>
+      <div style={styles.buttonRow}>
+        {MODALITIES.map((m) => (
           <button
+            key={m.key}
             type="button"
-            onClick={() => setExpanded((value) => !value)}
-            style={styles.expandButton}
+            onClick={() => handleClick(m.key)}
+            onMouseEnter={() => handleHover(m.key)}
+            onMouseLeave={handleLeave}
+            style={{
+              ...styles.modButton,
+              borderColor: active === m.key ? m.color : "#333",
+              background: active === m.key ? `${m.color}18` : "rgba(255,255,255,0.03)",
+              boxShadow: active === m.key ? `0 0 12px ${m.color}44` : "none",
+            }}
           >
-            {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            {expanded ? "Collapse Demo" : "Expand Demo"}
+            <span style={{ ...styles.modDot, background: m.color }} />
+            <span style={{
+              ...styles.modLabel,
+              color: active === m.key ? m.color : "#999",
+            }}>
+              {m.label}
+            </span>
+            <span style={styles.modHint}>{m.hint}</span>
           </button>
-          <ActivityLegend />
-        </div>
-
-        <div style={canvasWrapStyle}>
-          {!surfaceAsset && !assetError && (
-            <div style={styles.statusCard}>Loading cortical surface...</div>
-          )}
-          {assetError && <div style={styles.statusCard}>{assetError}</div>}
-          {surfaceAsset && (
-            <Canvas
-              camera={{ position: [0, 0.16, 4.45], fov: 19 }}
-              dpr={[1, 2]}
-              gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
-            >
-              <ambientLight intensity={0.95} />
-              <directionalLight position={[2.2, 1.8, 2]} intensity={1.4} />
-              <directionalLight position={[-2.4, 1.1, 0.8]} intensity={0.65} />
-              <pointLight position={[0, -1.6, 2.4]} intensity={0.25} />
-              <Environment preset="studio" environmentIntensity={0.45} />
-              <CorticalSurface
-                asset={surfaceAsset}
-                activations={activations}
-                currentTime={deferredTime}
-                surfaceMode={surfaceMode}
-                layoutMode={layoutMode}
-              />
-              <OrbitControls
-                enablePan={false}
-                enableZoom={expanded}
-                minDistance={3.2}
-                maxDistance={6.1}
-                target={[0, -0.02, 0]}
-              />
-            </Canvas>
-          )}
-        </div>
-
-        <div style={styles.bottomBar}>
-          <SegmentedControl
-            options={[
-              { key: "open", label: "Open" },
-              { key: "closed", label: "Close" },
-            ]}
-            value={layoutMode}
-            onChange={(value) => setLayoutMode(value as LayoutMode)}
-          />
-          <SegmentedControl
-            options={[
-              { key: "normal", label: "Normal" },
-              { key: "inflated", label: "Inflated" },
-            ]}
-            value={surfaceMode}
-            onChange={(value) => setSurfaceMode(value as SurfaceMode)}
-          />
-        </div>
+        ))}
       </div>
+      <div style={styles.canvasWrap}>
+        {!surfaceAsset && !assetError && (
+          <div style={styles.statusCard}>Loading cortical surface...</div>
+        )}
+        {assetError && <div style={styles.statusCard}>{assetError}</div>}
+        {surfaceAsset && (
+          <Canvas
+            camera={{ position: [0, 0.1, 4.0], fov: 42 }}
+            dpr={[1, 2]}
+            gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
+          >
+            <color attach="background" args={["#06060c"]} />
+            <ambientLight intensity={0.35} />
+            <directionalLight position={[6, 5, 7]} intensity={1.1} />
+            <directionalLight position={[-5, 3, -4]} intensity={0.55} />
+            <directionalLight position={[0, -6, 2]} intensity={0.2} />
+            <pointLight position={[0, 2.2, 3.2]} intensity={0.3} distance={8} decay={2} />
+            <Environment preset="studio" environmentIntensity={0.5} />
+            <CorticalSurface
+              asset={surfaceAsset}
+              modalityMap={modalityMap}
+              activations={activations}
+              currentTime={deferredTime}
+              layoutMode={layoutMode}
+              active={active}
+              timelineDrives={timelineDrives}
+            />
+            <OrbitControls
+              enableZoom
+              enablePan={false}
+              autoRotate={false}
+              minDistance={1.35}
+              maxDistance={4.5}
+              target={[0, 0.05, 0]}
+            />
+          </Canvas>
+        )}
+      </div>
+      <div style={styles.bottomControls}>
+        <SegmentedControl
+          options={[
+            { key: "open", label: "Open" },
+            { key: "closed", label: "Close" },
+          ]}
+          value={layoutMode}
+          onChange={(v) => setLayoutMode(v as LayoutMode)}
+        />
+      </div>
+      {locked && <p style={styles.lockHint}>Click again to deselect</p>}
     </div>
   );
 }
 
 function CorticalSurface({
   asset,
+  modalityMap,
   activations,
   currentTime,
-  surfaceMode,
   layoutMode,
+  active,
+  timelineDrives,
 }: {
   asset: SurfaceAssetData;
+  modalityMap: ModalityMapData | null;
   activations: BrainActivation[];
   currentTime: number;
-  surfaceMode: SurfaceMode;
   layoutMode: LayoutMode;
+  active: Modality;
+  timelineDrives?: ModalityDrives;
 }) {
   const data = useMemo(() => buildGeometryData(asset), [asset]);
   const frame = useMemo(
@@ -188,51 +219,39 @@ function CorticalSurface({
   );
 
   useEffect(() => {
-    applySurfaceLayout(data.left, surfaceMode);
-    applySurfaceLayout(data.right, surfaceMode);
-  }, [data, surfaceMode]);
-
-  useEffect(() => {
-    applySurfaceColors(data.left, frame);
-    applySurfaceColors(data.right, frame);
-  }, [data, frame]);
+    applyModalityColors(data.left, frame, modalityMap, active, timelineDrives);
+    applyModalityColors(data.right, frame, modalityMap, active, timelineDrives);
+  }, [data, frame, modalityMap, active, timelineDrives]);
 
   const leftOffset: [number, number, number] =
-    layoutMode === "open" ? [-0.98, 0.02, 0] : [0, 0, 0];
+    layoutMode === "open" ? [-0.9, 0, 0] : [0, 0, 0];
   const rightOffset: [number, number, number] =
-    layoutMode === "open" ? [0.98, 0.02, 0] : [0, 0, 0];
+    layoutMode === "open" ? [0.9, 0, 0] : [0, 0, 0];
   const leftRotation: [number, number, number] =
-    layoutMode === "open" ? [0, 1.72 + Math.PI / 2, 0.03] : [0, 0, 0];
+    layoutMode === "open" ? [0, 0, -Math.PI / 2] : [0, 0, 0];
   const rightRotation: [number, number, number] =
-    layoutMode === "open" ? [0, -1.72 - Math.PI / 2, -0.03] : [0, 0, 0];
-  const brainRotation: [number, number, number] = [-Math.PI / 2, 0.12, 0];
+    layoutMode === "open" ? [0, 0, Math.PI / 2] : [0, 0, 0];
+  const brainRotation: [number, number, number] = [-Math.PI / 2, 0, 0];
+
+  const matProps = {
+    vertexColors: true as const,
+    roughness: active || timelineDrives ? 0.22 : 0.42,
+    metalness: 0.04,
+    envMapIntensity: active || timelineDrives ? 1.1 : 0.8,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  };
 
   return (
-    <group rotation={brainRotation} position={[0, -0.05, 0]} scale={0.275}>
+    <group rotation={brainRotation}>
       <group position={leftOffset} rotation={leftRotation}>
         <mesh geometry={data.left.geometry}>
-          <meshStandardMaterial
-            vertexColors
-            roughness={0.58}
-            metalness={0.02}
-            envMapIntensity={0.55}
-            side={THREE.DoubleSide}
-            transparent
-            opacity={0.84}
-          />
+          <meshStandardMaterial {...matProps} />
         </mesh>
       </group>
       <group position={rightOffset} rotation={rightRotation}>
         <mesh geometry={data.right.geometry}>
-          <meshStandardMaterial
-            vertexColors
-            roughness={0.58}
-            metalness={0.02}
-            envMapIntensity={0.55}
-            side={THREE.DoubleSide}
-            transparent
-            opacity={0.84}
-          />
+          <meshStandardMaterial {...matProps} />
         </mesh>
       </group>
     </group>
@@ -251,18 +270,16 @@ function SegmentedControl({
   return (
     <div style={styles.segmentGroup}>
       {options.map((option) => {
-        const active = option.key === value;
+        const isActive = option.key === value;
         return (
           <button
             key={option.key}
             type="button"
-            onClick={() => {
-              if (!option.disabled) onChange(option.key);
-            }}
+            onClick={() => { if (!option.disabled) onChange(option.key); }}
             disabled={option.disabled}
             style={{
               ...styles.segmentButton,
-              ...(active ? styles.segmentButtonActive : null),
+              ...(isActive ? styles.segmentButtonActive : null),
               ...(option.disabled ? styles.segmentButtonDisabled : null),
             }}
           >
@@ -274,66 +291,32 @@ function SegmentedControl({
   );
 }
 
-function ActivityLegend() {
-  return (
-    <div style={styles.legendWrap}>
-      <div style={styles.legendLabels}>
-        <span>Low</span>
-        <span>High</span>
-      </div>
-      <div style={styles.legendBar}>
-        <span style={{ ...styles.legendTick, left: "8%" }} />
-        <span style={{ ...styles.legendTick, left: "92%" }} />
-      </div>
-      <div style={styles.legendTitle}>Activity</div>
-    </div>
-  );
-}
+// ---------------------------------------------------------------------------
+// Asset loading
+// ---------------------------------------------------------------------------
 
 async function loadSurfaceAsset(): Promise<SurfaceAssetData> {
-  const errors: string[] = [];
-  const legacy = await tryLoadJsonAsset<LegacyMeshData>("brain-mesh.json", errors);
-  if (legacy) {
-    return {
-      mesh: "fsaverage5",
-      vertexCount: legacy.vertexCount ?? legacy.vertices.length / 3,
-      lhCount: legacy.lhCount,
-      indices: legacy.indices,
-      pialVertices: legacy.vertices,
-    };
-  }
-
-  throw new Error(errors[0] ?? "Brain surface assets are missing.");
-}
-
-function normalizeSurfaceAsset(raw: SurfaceAssetData): SurfaceAssetData {
+  const resp = await fetch(resolvePublicAssetUrl("brain-mesh.json"), {
+    headers: { Accept: "application/json" },
+  });
+  if (!resp.ok) throw new Error("Brain mesh asset not found.");
+  const data = JSON.parse(await resp.text()) as LegacyMeshData;
   return {
-    mesh: raw.mesh || "fsaverage5",
-    vertexCount: raw.vertexCount ?? raw.pialVertices.length / 3,
-    lhCount: raw.lhCount,
-    indices: raw.indices,
-    pialVertices: raw.pialVertices,
-    inflatedVertices: raw.inflatedVertices,
-    sulc: raw.sulc,
+    vertexCount: data.vertexCount ?? data.vertices.length / 3,
+    lhCount: data.lhCount,
+    indices: data.indices,
+    pialVertices: data.vertices,
   };
 }
 
-async function tryLoadJsonAsset<T>(
-  filename: string,
-  errors: string[]
-): Promise<T | null> {
+async function loadModalityMap(): Promise<ModalityMapData | null> {
   try {
-    const response = await fetch(resolvePublicAssetUrl(filename), {
+    const resp = await fetch(resolvePublicAssetUrl("brain-modality-map.json"), {
       headers: { Accept: "application/json" },
     });
-    if (!response.ok) return null;
-
-    const text = await response.text();
-    return JSON.parse(text) as T;
-  } catch (error) {
-    const detail =
-      error instanceof Error ? error.message : "Unexpected asset load failure.";
-    errors.push(`${filename}: ${detail}`);
+    if (!resp.ok) return null;
+    return JSON.parse(await resp.text()) as ModalityMapData;
+  } catch {
     return null;
   }
 }
@@ -342,34 +325,18 @@ function resolvePublicAssetUrl(filename: string) {
   return new URL(filename, document.baseURI).toString();
 }
 
+// ---------------------------------------------------------------------------
+// Hemisphere geometry construction
+// ---------------------------------------------------------------------------
+
 function buildGeometryData(asset: SurfaceAssetData): BrainGeometryData {
   const pialPositions = new Float32Array(asset.pialVertices);
-  const combinedGeometry = new THREE.BufferGeometry();
-  combinedGeometry.setAttribute(
-    "position",
-    new THREE.BufferAttribute(pialPositions.slice(), 3)
-  );
-  combinedGeometry.setIndex(new THREE.BufferAttribute(new Uint32Array(asset.indices), 1));
-  combinedGeometry.computeVertexNormals();
-
-  const normalAttr = combinedGeometry.getAttribute("normal") as THREE.BufferAttribute;
-  const inflatedPositions = asset.inflatedVertices
-    ? new Float32Array(asset.inflatedVertices)
-    : buildFallbackInflatedPositions(
-        pialPositions,
-        new Float32Array(normalAttr.array as ArrayLike<number>),
-        asset.lhCount
-      );
-
-  const sulc = asset.sulc ? new Float32Array(asset.sulc) : null;
   return {
     left: createHemisphereGeometryData({
       vertexStart: 0,
       vertexEnd: asset.lhCount,
       totalVertexCount: asset.vertexCount,
       pialPositions,
-      inflatedPositions,
-      sulc,
       indices: asset.indices,
     }),
     right: createHemisphereGeometryData({
@@ -377,8 +344,6 @@ function buildGeometryData(asset: SurfaceAssetData): BrainGeometryData {
       vertexEnd: asset.vertexCount,
       totalVertexCount: asset.vertexCount,
       pialPositions,
-      inflatedPositions,
-      sulc,
       indices: asset.indices,
     }),
   };
@@ -389,405 +354,272 @@ function createHemisphereGeometryData({
   vertexEnd,
   totalVertexCount,
   pialPositions,
-  inflatedPositions,
-  sulc,
   indices,
 }: {
   vertexStart: number;
   vertexEnd: number;
   totalVertexCount: number;
   pialPositions: Float32Array;
-  inflatedPositions: Float32Array;
-  sulc: Float32Array | null;
   indices: number[];
 }): HemisphereGeometryData {
-  const localPial = sliceVertexRange(pialPositions, vertexStart, vertexEnd);
-  const localInflated = sliceVertexRange(inflatedPositions, vertexStart, vertexEnd);
-  const localSulc = sulc ? sulc.slice(vertexStart, vertexEnd) : null;
+  const localPial = pialPositions.slice(vertexStart * 3, vertexEnd * 3);
   const localIndices = extractHemisphereIndices(indices, vertexStart, vertexEnd);
+  const vertexCount = vertexEnd - vertexStart;
+
   const geometry = new THREE.BufferGeometry();
   const positionAttr = new THREE.BufferAttribute(localPial.slice(), 3);
-  const colorAttr = new THREE.BufferAttribute(
-    new Float32Array((vertexEnd - vertexStart) * 3),
-    3
-  );
+  const colorAttr = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
   geometry.setAttribute("position", positionAttr);
   geometry.setAttribute("color", colorAttr);
   geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(localIndices), 1));
   geometry.computeVertexNormals();
 
-  const [sulcMin, sulcMax] = getMinMax(localSulc);
+  const adjacency = buildAdjacency(localIndices, vertexCount);
 
   return {
     geometry,
     positionAttr,
     colorAttr,
     pialPositions: localPial,
-    inflatedPositions: localInflated,
-    sulc: localSulc,
-    sulcMin,
-    sulcMax,
     vertexStart,
-    vertexCount: vertexEnd - vertexStart,
+    vertexCount,
     totalVertexCount,
+    adjacency,
   };
-}
-
-function sliceVertexRange(
-  values: Float32Array,
-  vertexStart: number,
-  vertexEnd: number
-) {
-  return values.slice(vertexStart * 3, vertexEnd * 3);
 }
 
 function extractHemisphereIndices(
   indices: number[],
   vertexStart: number,
-  vertexEnd: number
+  vertexEnd: number,
 ) {
-  const localIndices: number[] = [];
-
-  for (let index = 0; index < indices.length; index += 3) {
-    const a = indices[index];
-    const b = indices[index + 1];
-    const c = indices[index + 2];
+  const local: number[] = [];
+  for (let i = 0; i < indices.length; i += 3) {
+    const a = indices[i], b = indices[i + 1], c = indices[i + 2];
     if (
-      a >= vertexStart &&
-      a < vertexEnd &&
-      b >= vertexStart &&
-      b < vertexEnd &&
-      c >= vertexStart &&
-      c < vertexEnd
+      a >= vertexStart && a < vertexEnd &&
+      b >= vertexStart && b < vertexEnd &&
+      c >= vertexStart && c < vertexEnd
     ) {
-      localIndices.push(a - vertexStart, b - vertexStart, c - vertexStart);
+      local.push(a - vertexStart, b - vertexStart, c - vertexStart);
+    }
+  }
+  return local;
+}
+
+function buildAdjacency(indices: number[], vertexCount: number): number[][] {
+  const adj: Set<number>[] = new Array(vertexCount);
+  for (let i = 0; i < vertexCount; i++) adj[i] = new Set();
+  for (let f = 0; f < indices.length; f += 3) {
+    const a = indices[f], b = indices[f + 1], c = indices[f + 2];
+    adj[a].add(b); adj[a].add(c);
+    adj[b].add(a); adj[b].add(c);
+    adj[c].add(a); adj[c].add(b);
+  }
+  return adj.map(s => Array.from(s));
+}
+
+// ---------------------------------------------------------------------------
+// Per-hemisphere RGB modality coloring (from origin) + diffusion
+// ---------------------------------------------------------------------------
+
+const ACT_THRESHOLD = 0.5;
+const ACT_RANGE = 1.0 - ACT_THRESHOLD;
+const MANUAL_STRENGTH = 4.0;
+const AUTO_STRENGTH = 5.0;
+const BASE_DIM = 0.10;
+const CONTRAST = 2.0;
+const DIFFUSION_PASSES = 4;
+const DIFFUSION_PULL = 0.3;
+
+function applyModalityColors(
+  hemi: HemisphereGeometryData,
+  frame: BrainActivation | null,
+  modalityMap: ModalityMapData | null,
+  active: Modality,
+  timelineDrives?: ModalityDrives,
+) {
+  const colors = hemi.colorAttr.array as Float32Array;
+  const n = hemi.vertexCount;
+  const verts = frame?.vertices;
+  const nAct = verts?.length ?? 0;
+
+  const hasManual = active !== null;
+  const drives = timelineDrives ?? { visual: 0, audio: 0, text: 0 };
+  const hasDrives = !hasManual && (drives.visual + drives.audio + drives.text) > 0.01;
+
+  const posArr = hemi.pialPositions;
+
+  for (let i = 0; i < n; i++) {
+    const gi = hemi.vertexStart + i;
+
+    // Interpolated activation from sparse vertex array
+    let rawAct = 0;
+    if (verts && nAct > 0) {
+      const t = ((gi + 0.5) / hemi.totalVertexCount) * nAct - 0.5;
+      const lo = Math.max(0, Math.floor(t));
+      const hi = Math.min(nAct - 1, lo + 1);
+      const frac = t - lo;
+      rawAct = verts[lo] * (1 - frac) + verts[hi] * frac;
+    }
+
+    // Deterministic spatial noise from vertex position
+    const px = posArr[i * 3], py = posArr[i * 3 + 1], pz = posArr[i * 3 + 2];
+    const h1 = Math.sin(px * 73.17 + py * 119.43 + pz * 157.29) * 43758.5453;
+    const noise = (h1 - Math.floor(h1)) * 2 - 1;
+    rawAct += noise * 0.12;
+
+    const isActive = rawAct > ACT_THRESHOLD;
+    const voxelBright = isActive
+      ? Math.pow(Math.max(0, (rawAct - ACT_THRESHOLD) / ACT_RANGE), 1 / CONTRAST)
+      : 0;
+
+    const isVis = modalityMap ? (modalityMap.visual[gi] ?? 0) > 0.5 : false;
+    const isAud = modalityMap ? (modalityMap.audio[gi] ?? 0) > 0.5 : false;
+    const isTxt = modalityMap ? (modalityMap.text[gi] ?? 0) > 0.5 : false;
+    const inRegion = isVis || isAud || isTxt;
+
+    let r = 0, g = 0, b = 0;
+
+    if (hasManual) {
+      const show =
+        (active === "visual" && isVis) ||
+        (active === "audio" && isAud) ||
+        (active === "text" && isTxt);
+      if (show && isActive) {
+        const intensity = voxelBright * MANUAL_STRENGTH;
+        if (active === "visual") r = intensity;
+        else if (active === "audio") g = intensity;
+        else b = intensity;
+        const sat = Math.min(1, intensity * 0.5);
+        const gray = (1 - sat) * BASE_DIM;
+        r += gray; g += gray; b += gray;
+      } else {
+        r = g = b = BASE_DIM;
+      }
+    } else if (hasDrives && inRegion && isActive) {
+      const GAMMA = 1.4;
+      const visGlow = isVis ? voxelBright * Math.pow(Math.max(0, drives.visual), GAMMA) * AUTO_STRENGTH : 0;
+      const audGlow = isAud ? voxelBright * Math.pow(Math.max(0, drives.audio), GAMMA) * AUTO_STRENGTH : 0;
+      const txtGlow = isTxt ? voxelBright * Math.pow(Math.max(0, drives.text), GAMMA) * AUTO_STRENGTH : 0;
+      const totalGlow = visGlow + audGlow + txtGlow;
+      const sat = Math.min(1, totalGlow * 0.5);
+      const gray = (1 - sat) * 0.15;
+      r = gray + visGlow;
+      g = gray + audGlow;
+      b = gray + txtGlow;
+    } else {
+      r = g = b = hasDrives ? BASE_DIM : 0.45;
+    }
+
+    colors[i * 3]     = r;
+    colors[i * 3 + 1] = g;
+    colors[i * 3 + 2] = b;
+  }
+
+  // Diffusion: bright voxels bleed color into mesh neighbors
+  for (let pass = 0; pass < DIFFUSION_PASSES; pass++) {
+    const prev = new Float32Array(colors);
+    for (let i = 0; i < n; i++) {
+      const nb = hemi.adjacency[i];
+      if (!nb.length) continue;
+      let maxR = 0, maxG = 0, maxB = 0;
+      for (let k = 0; k < nb.length; k++) {
+        const ni = nb[k];
+        const nr = prev[ni * 3], ng = prev[ni * 3 + 1], nb2 = prev[ni * 3 + 2];
+        if (nr > maxR) maxR = nr;
+        if (ng > maxG) maxG = ng;
+        if (nb2 > maxB) maxB = nb2;
+      }
+      const cr = prev[i * 3], cg = prev[i * 3 + 1], cb = prev[i * 3 + 2];
+      if (maxR > cr) colors[i * 3]     = cr + (maxR - cr) * DIFFUSION_PULL;
+      if (maxG > cg) colors[i * 3 + 1] = cg + (maxG - cg) * DIFFUSION_PULL;
+      if (maxB > cb) colors[i * 3 + 2] = cb + (maxB - cb) * DIFFUSION_PULL;
     }
   }
 
-  return localIndices;
+  hemi.colorAttr.needsUpdate = true;
 }
 
-function buildFallbackInflatedPositions(
-  positions: Float32Array,
-  normals: Float32Array,
-  lhCount: number
-): Float32Array {
-  const inflated = new Float32Array(positions.length);
-  const leftCenter = getHemisphereCenter(positions, 0, lhCount);
-  const rightCenter = getHemisphereCenter(positions, lhCount, positions.length / 3);
-
-  for (let index = 0; index < positions.length / 3; index += 1) {
-    const offset = index * 3;
-    const center = index < lhCount ? leftCenter : rightCenter;
-    const x = positions[offset];
-    const y = positions[offset + 1];
-    const z = positions[offset + 2];
-    const nx = normals[offset];
-    const ny = normals[offset + 1];
-    const nz = normals[offset + 2];
-    const rx = x - center.x;
-    const ry = y - center.y;
-    const rz = z - center.z;
-    const radialLength = Math.max(0.0001, Math.hypot(rx, ry, rz));
-    const radialScale = 0.06 / radialLength;
-
-    inflated[offset] = x + nx * 0.09 + rx * radialScale;
-    inflated[offset + 1] = y + ny * 0.09 + ry * radialScale;
-    inflated[offset + 2] = z + nz * 0.09 + rz * radialScale;
-  }
-
-  return inflated;
-}
-
-function getHemisphereCenter(
-  positions: Float32Array,
-  startVertex: number,
-  endVertex: number
-) {
-  let x = 0;
-  let y = 0;
-  let z = 0;
-  const count = Math.max(1, endVertex - startVertex);
-
-  for (let index = startVertex; index < endVertex; index += 1) {
-    const offset = index * 3;
-    x += positions[offset];
-    y += positions[offset + 1];
-    z += positions[offset + 2];
-  }
-
-  return { x: x / count, y: y / count, z: z / count };
-}
-
-function applySurfaceLayout(data: HemisphereGeometryData, surfaceMode: SurfaceMode) {
-  const source =
-    surfaceMode === "inflated" ? data.inflatedPositions : data.pialPositions;
-  const target = data.positionAttr.array as Float32Array;
-
-  for (let index = 0; index < data.vertexCount; index += 1) {
-    const offset = index * 3;
-    target[offset] = source[offset];
-    target[offset + 1] = source[offset + 1];
-    target[offset + 2] = source[offset + 2];
-  }
-
-  data.positionAttr.needsUpdate = true;
-  data.geometry.computeVertexNormals();
-}
-
-function applySurfaceColors(
-  data: HemisphereGeometryData,
-  frame: BrainActivation | null
-) {
-  const target = data.colorAttr.array as Float32Array;
-  const source = frame?.vertices ?? [];
-  const sourceCount = source.length;
-
-  for (let index = 0; index < data.vertexCount; index += 1) {
-    const globalIndex = data.vertexStart + index;
-    const activity =
-      sourceCount > 0
-        ? Math.abs(
-            source[
-              Math.min(
-                sourceCount - 1,
-                Math.floor((globalIndex / data.totalVertexCount) * sourceCount)
-              )
-            ] ?? 0
-          )
-        : 0;
-    const base = getBaseGray(data, index);
-    const heat = getActivityColor(Math.pow(clamp01(activity), 1.12));
-    const blend = smoothstep(0.06, 0.72, activity);
-    const offset = index * 3;
-
-    target[offset] = mix(base, heat.r, blend);
-    target[offset + 1] = mix(base, heat.g, blend);
-    target[offset + 2] = mix(base, heat.b, blend);
-  }
-
-  data.colorAttr.needsUpdate = true;
-}
-
-function getBaseGray(data: HemisphereGeometryData, index: number): number {
-  if (!data.sulc) return 0.56;
-  const raw = data.sulc[index] ?? 0;
-  const normalized =
-    (raw - data.sulcMin) / Math.max(0.0001, data.sulcMax - data.sulcMin);
-  return 0.3 + (1 - normalized) * 0.2;
-}
-
-function getActivityColor(value: number) {
-  const stops = [
-    { at: 0, color: [0.36, 0.06, 0.02] },
-    { at: 0.28, color: [0.84, 0.22, 0.06] },
-    { at: 0.6, color: [0.98, 0.5, 0.08] },
-    { at: 1, color: [1, 0.92, 0.74] },
-  ] as const;
-
-  for (let index = 1; index < stops.length; index += 1) {
-    const next = stops[index];
-    const prev = stops[index - 1];
-    if (value <= next.at) {
-      const mixAmount = (value - prev.at) / (next.at - prev.at);
-      return {
-        r: mix(prev.color[0], next.color[0], mixAmount),
-        g: mix(prev.color[1], next.color[1], mixAmount),
-        b: mix(prev.color[2], next.color[2], mixAmount),
-      };
-    }
-  }
-
-  const last = stops[stops.length - 1].color;
-  return { r: last[0], g: last[1], b: last[2] };
-}
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 
 function findClosestActivation(
   activations: BrainActivation[],
-  currentTime: number
+  currentTime: number,
 ): BrainActivation | null {
   let closest: BrainActivation | null = null;
-  let minDistance = Infinity;
-
-  for (const activation of activations) {
-    const distance = Math.abs(activation.time - currentTime);
-    if (distance < minDistance) {
-      minDistance = distance;
-      closest = activation;
-    }
+  let minDist = Infinity;
+  for (const a of activations) {
+    const d = Math.abs(a.time - currentTime);
+    if (d < minDist) { minDist = d; closest = a; }
   }
-
   return closest;
 }
 
-function getMinMax(values: Float32Array | null): [number, number] {
-  if (!values || values.length === 0) return [0, 1];
-  let min = values[0];
-  let max = values[0];
-
-  for (let index = 1; index < values.length; index += 1) {
-    const value = values[index];
-    if (value < min) min = value;
-    if (value > max) max = value;
-  }
-
-  return [min, max];
-}
-
-function clamp01(value: number) {
-  return Math.min(1, Math.max(0, value));
-}
-
-function smoothstep(edge0: number, edge1: number, value: number) {
-  const x = clamp01((value - edge0) / Math.max(0.0001, edge1 - edge0));
-  return x * x * (3 - 2 * x);
-}
-
-function mix(a: number, b: number, t: number) {
-  return a + (b - a) * clamp01(t);
-}
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 
 const styles: Record<string, React.CSSProperties> = {
-  shell: {
-    position: "relative",
-    minHeight: 620,
-    borderRadius: 28,
-    border: "1px solid rgba(255,255,255,0.1)",
-    background:
-      "radial-gradient(circle at 50% 38%, rgba(255,255,255,0.08), transparent 34%), #030303",
-    overflow: "hidden",
-    boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
-  },
-  shellExpanded: {
-    position: "fixed",
-    inset: 24,
-    zIndex: 500,
-    minHeight: "unset",
-  },
-  viewport: {
-    position: "relative",
-    width: "100%",
-    height: "100%",
-    minHeight: 620,
-  },
-  viewportExpanded: {
-    minHeight: "100%",
-  },
-  halo: {
-    position: "absolute",
-    inset: "18% 20% 20%",
-    borderRadius: "50%",
-    background:
-      "radial-gradient(circle, rgba(255,255,255,0.12), rgba(255,255,255,0.03) 48%, transparent 70%)",
-    filter: "blur(8px)",
-    pointerEvents: "none",
-  },
-  topBar: {
-    position: "absolute",
-    top: 24,
-    left: 24,
-    right: 24,
-    zIndex: 2,
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "1rem",
-  },
-  expandButton: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "0.6rem",
-    padding: "0.8rem 1.2rem",
-    borderRadius: 20,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(0,0,0,0.52)",
-    color: "#f2f2f2",
-    fontSize: "0.95rem",
-    fontWeight: 600,
-    cursor: "pointer",
-    backdropFilter: "blur(10px)",
-  },
-  legendWrap: {
+  container: {
+    background: "rgba(255,255,255,0.02)",
+    border: "1px solid #222",
+    borderRadius: 12,
+    padding: "1rem",
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
-    width: 240,
-    color: "#ececec",
-    textAlign: "center",
   },
-  legendLabels: {
+  title: {
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    color: "#ccc",
+    marginBottom: "0.65rem",
+  },
+  buttonRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 1fr",
+    gap: "0.5rem",
+    marginBottom: "0.75rem",
+  },
+  modButton: {
     display: "flex",
-    justifyContent: "space-between",
-    fontSize: "0.82rem",
-    marginBottom: "0.3rem",
-    letterSpacing: "0.02em",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "0.25rem",
+    padding: "0.55rem 0.4rem",
+    border: "1.5px solid #333",
+    borderRadius: 10,
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+    minWidth: 0,
   },
-  legendBar: {
-    position: "relative",
+  modDot: {
+    display: "inline-block",
+    width: 10,
     height: 10,
-    borderRadius: 999,
-    background:
-      "linear-gradient(90deg, #4b0404 0%, #ac2810 35%, #f1a532 72%, #fdf4d4 100%)",
-    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+    borderRadius: "50%",
+    flexShrink: 0,
   },
-  legendTick: {
-    position: "absolute",
-    top: -5,
-    width: 3,
-    height: 20,
-    borderRadius: 2,
-    background: "rgba(255,255,255,0.85)",
-    transform: "translateX(-50%)",
+  modLabel: {
+    fontSize: "0.78rem",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
   },
-  legendTitle: {
-    marginTop: "0.35rem",
-    fontSize: "0.82rem",
-    letterSpacing: "0.03em",
+  modHint: {
+    fontSize: "0.6rem",
+    color: "#555",
+    lineHeight: 1.2,
   },
   canvasWrap: {
-    height: 620,
-  },
-  canvasWrapExpanded: {
-    height: "100%",
-  },
-  bottomBar: {
-    position: "absolute",
-    left: 24,
-    right: 24,
-    bottom: 18,
-    zIndex: 2,
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "1rem",
-  },
-  segmentGroup: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 6,
-    padding: 6,
-    borderRadius: 18,
-    border: "1px solid rgba(255,255,255,0.1)",
-    background: "rgba(7,7,7,0.86)",
-    backdropFilter: "blur(14px)",
-  },
-  segmentButton: {
-    border: "none",
-    borderRadius: 12,
-    background: "transparent",
-    color: "rgba(255,255,255,0.7)",
-    padding: "0.85rem 0.75rem",
-    fontSize: "0.98rem",
-    fontWeight: 600,
-    cursor: "pointer",
-    transition: "background 120ms ease, color 120ms ease",
-  },
-  segmentButtonActive: {
-    background: "rgba(255,255,255,0.14)",
-    color: "#f6f6f6",
-  },
-  segmentButtonDisabled: {
-    opacity: 0.42,
-    cursor: "not-allowed",
+    position: "relative",
+    width: "100%",
+    height: 420,
+    borderRadius: 8,
+    overflow: "hidden",
   },
   statusCard: {
     position: "absolute",
@@ -800,5 +632,46 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#e8e8e8",
     fontSize: "0.92rem",
     backdropFilter: "blur(10px)",
+  },
+  bottomControls: {
+    marginTop: "0.75rem",
+    display: "flex",
+    justifyContent: "center",
+  },
+  segmentGroup: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 6,
+    padding: 6,
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.1)",
+    background: "rgba(7,7,7,0.86)",
+    backdropFilter: "blur(14px)",
+    minWidth: 180,
+  },
+  segmentButton: {
+    border: "none",
+    borderRadius: 12,
+    background: "transparent",
+    color: "rgba(255,255,255,0.7)",
+    padding: "0.6rem 0.75rem",
+    fontSize: "0.88rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "background 120ms ease, color 120ms ease",
+  },
+  segmentButtonActive: {
+    background: "rgba(255,255,255,0.14)",
+    color: "#f6f6f6",
+  },
+  segmentButtonDisabled: {
+    opacity: 0.42,
+    cursor: "not-allowed",
+  },
+  lockHint: {
+    fontSize: "0.65rem",
+    color: "#555",
+    textAlign: "center",
+    marginTop: "0.45rem",
   },
 };
