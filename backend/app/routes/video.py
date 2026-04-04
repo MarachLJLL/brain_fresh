@@ -3,7 +3,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
 from app.config import settings
 from app.models.schemas import AnalysisResult, UploadResponse
@@ -70,6 +70,16 @@ async def process_video_ws(websocket: WebSocket, video_id: str):
             )
         except Exception:
             pass
+
+
+@router.post("/import-result/{video_id}", response_model=AnalysisResult)
+async def import_analysis_result(video_id: str, result: AnalysisResult):
+    """Load a precomputed AnalysisResult (e.g. from Colab GPU). Set ALLOW_ANALYSIS_IMPORT=1 in .env."""
+    if not settings.allow_analysis_import:
+        raise HTTPException(status_code=403, detail="Analysis import is disabled (set ALLOW_ANALYSIS_IMPORT=1).")
+    updated = result.model_copy(update={"video_id": video_id})
+    analysis_store[video_id] = updated
+    return updated
 
 
 @router.get("/result/{video_id}", response_model=AnalysisResult)

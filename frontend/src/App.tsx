@@ -95,7 +95,16 @@ export default function App() {
 
   // --- Processing screen ---
   if (appState === "processing") {
-    return <LoadingScreen status={processingStatus} />;
+    return (
+      <LoadingScreen
+        status={processingStatus}
+        videoId={videoId}
+        onImportAnalysisJson={(data) => {
+          setAnalysis({ ...data, video_id: videoId });
+          setAppState("results");
+        }}
+      />
+    );
   }
 
   // --- Results screen ---
