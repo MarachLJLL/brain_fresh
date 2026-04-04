@@ -8,8 +8,15 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 500
     tribe_model_id: str = "facebook/tribev2"
     tribe_cache_dir: str = "./model_cache"
+    # auto: cuda if available, else Apple MPS (Metal) on supported Macs, else cpu.
+    # Override with TRIBE_DEVICE=cpu|mps|cuda in .env if needed (CUDA is not available on macOS).
+    tribe_device: str = "auto"
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"
+    # Kimi / Moonshot (OpenAI-compatible). If set, feedback uses this instead of Anthropic.
+    moonshot_api_key: str = ""
+    moonshot_base_url: str = "https://api.moonshot.cn/v1"
+    moonshot_model: str = "moonshot-v1-8k"
     low_engagement_threshold: float = 0.3  # bottom 30th percentile = low engagement
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

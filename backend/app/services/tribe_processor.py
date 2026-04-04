@@ -14,6 +14,21 @@ from app.models.schemas import (
 
 logger = logging.getLogger(__name__)
 
+
+def _tribe_inference_device() -> str:
+    """Pick torch device for TRIBE. CUDA is unavailable on macOS; use MPS on Apple Silicon when possible."""
+    import torch
+
+    raw = (settings.tribe_device or "auto").strip().lower()
+    if raw in ("cpu", "cuda", "mps"):
+        return raw
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 # Region masks for fsaverage5 (20484 vertices total, 10242 per hemisphere).
 # These index ranges approximate the major functional regions based on the HCP parcellation.
 # Visual cortex: V1-V4, MT complex (roughly posterior occipital vertices)
@@ -53,16 +68,21 @@ class TribeProcessor:
         def _load():
             from tribev2.demo_utils import TribeModel
 
+            device = _tribe_inference_device()
+            logger.info("TRIBE v2 inference device: %s", device)
+
             logger.info("Loading TRIBE v2 full model...")
             self._model_all = TribeModel.from_pretrained(
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
+                device=device,
             )
 
             logger.info("Loading TRIBE v2 video-only model...")
             self._model_video = TribeModel.from_pretrained(
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
+                device=device,
                 config_update={"data.features_to_mask": ["text", "audio"]},
             )
 
@@ -70,6 +90,7 @@ class TribeProcessor:
             self._model_audio = TribeModel.from_pretrained(
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
+                device=device,
                 config_update={"data.features_to_mask": ["video", "text"]},
             )
 
@@ -77,6 +98,7 @@ class TribeProcessor:
             self._model_text = TribeModel.from_pretrained(
                 checkpoint_dir=settings.tribe_model_id,
                 cache_folder=settings.tribe_cache_dir,
+                device=device,
                 config_update={"data.features_to_mask": ["video", "audio"]},
             )
 

@@ -13,7 +13,7 @@ feedback_service = ClaudeFeedbackService()
 
 @router.post("/analyze", response_model=FeedbackResponse)
 async def analyze_section(request: FeedbackRequest):
-    """Get Claude-powered feedback for a low-engagement video section."""
+    """Get LLM feedback for a low-engagement section (Kimi/Moonshot or Claude)."""
     try:
         return await feedback_service.get_feedback(request)
     except Exception as e:
