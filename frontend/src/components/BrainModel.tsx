@@ -200,10 +200,22 @@ function CorticalBrain({
     const drives = timelineDrives ?? { visual: 0, audio: 0, text: 0 };
     const hasDrives = !hasManual && (drives.visual + drives.audio + drives.text) > 0.01;
     const MANUAL_STRENGTH = 5.0;
-    const AUTO_STRENGTH = 3.0;
+
+    // Raise drive to a power so low engagement stays nearly gray and only
+    // high engagement produces saturated color.  drive^2.2 maps:
+    //   0.2 → 0.03   (barely tinted)
+    //   0.5 → 0.22   (gentle color)
+    //   0.8 → 0.62   (vivid)
+    //   1.0 → 1.0    (full saturation)
+    const GAMMA = 2.2;
+    const MAX_AUTO = 4.0;
+    const visAuto = Math.pow(Math.max(0, drives.visual), GAMMA) * MAX_AUTO;
+    const audAuto = Math.pow(Math.max(0, drives.audio), GAMMA) * MAX_AUTO;
+    const txtAuto = Math.pow(Math.max(0, drives.text), GAMMA) * MAX_AUTO;
 
     for (let i = 0; i < n; i++) {
-      const baseBright = hasManual ? 0.18 : hasDrives ? 0.28 : 0.55;
+      // Base gray dims slightly when any modality is active
+      const baseBright = hasManual ? 0.18 : hasDrives ? 0.42 : 0.55;
       let r = baseBright, g = baseBright, b = baseBright;
 
       // Per-vertex activation brightness
@@ -217,8 +229,6 @@ function CorticalBrain({
         b *= brightness;
       }
 
-      // Modality glow — modulated by per-vertex activation so individual
-      // voxels drive how bright each region appears.
       const glowMod = 0.3 + actValue * 0.7;
 
       if (hasManual) {
@@ -226,9 +236,9 @@ function CorticalBrain({
         g += audioMask[i] * (active === "audio" ? 1 : 0) * MANUAL_STRENGTH;
         b += textMask[i] * (active === "text" ? 1 : 0) * MANUAL_STRENGTH;
       } else if (hasDrives) {
-        r += visualMask[i] * drives.visual * AUTO_STRENGTH * glowMod;
-        g += audioMask[i] * drives.audio * AUTO_STRENGTH * glowMod;
-        b += textMask[i] * drives.text * AUTO_STRENGTH * glowMod;
+        r += visualMask[i] * visAuto * glowMod;
+        g += audioMask[i] * audAuto * glowMod;
+        b += textMask[i] * txtAuto * glowMod;
       }
 
       colors[i * 3] = r;

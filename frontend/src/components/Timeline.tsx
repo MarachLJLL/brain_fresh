@@ -80,6 +80,8 @@ export default function Timeline({
           <LineChart data={chartData} onClick={handleClick}>
             <XAxis
               dataKey="time"
+              type="number"
+              domain={[0, duration]}
               tick={{ fill: "#555", fontSize: 11 }}
               tickFormatter={(v) => {
                 const m = Math.floor(v / 60);
@@ -110,14 +112,6 @@ export default function Timeline({
               />
             ))}
 
-            {/* Playhead */}
-            <ReferenceLine
-              x={currentTime}
-              stroke="#8b5cf6"
-              strokeWidth={2}
-              strokeDasharray="4 2"
-            />
-
             <Line
               type="monotone"
               dataKey="visual"
@@ -141,6 +135,20 @@ export default function Timeline({
               strokeWidth={1.5}
               dot={false}
               isAnimationActive={false}
+            />
+
+            {/* Playhead — rendered last so it draws on top of data lines */}
+            <ReferenceLine
+              x={currentTime}
+              stroke="#ffffff"
+              strokeWidth={2}
+              label={{
+                value: fmtTime(currentTime),
+                position: "top",
+                fill: "#fff",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -182,6 +190,12 @@ function LegendItem({ color, label }: { color: string; label: string }) {
       <span style={{ fontSize: "0.75rem", color: "#888" }}>{label}</span>
     </div>
   );
+}
+
+function fmtTime(t: number) {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function formatRange(a: number, b: number) {
