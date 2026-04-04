@@ -8,6 +8,22 @@ import type {
 
 const api = axios.create({ baseURL: "/api" });
 
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+    if (typeof detail === "string" && detail.trim()) {
+      return detail;
+    }
+    if (typeof error.message === "string" && error.message.trim()) {
+      return error.message;
+    }
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
+
 export async function uploadVideo(file: File): Promise<{ video_id: string }> {
   const form = new FormData();
   form.append("file", file);
@@ -54,8 +70,12 @@ export async function importAnalysisResult(
 }
 
 export async function getFeedback(params: FeedbackRequest): Promise<FeedbackResponse> {
-  const { data } = await api.post("/feedback/analyze", params);
-  return data;
+  try {
+    const { data } = await api.post("/feedback/analyze", params);
+    return data;
+  } catch (error) {
+    throw new Error(getApiErrorMessage(error, "Failed to get feedback"));
+  }
 }
 
 export function getVideoUrl(videoId: string): string {

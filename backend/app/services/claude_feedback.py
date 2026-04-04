@@ -37,7 +37,10 @@ class ClaudeFeedbackService:
         screenshot_data_url = self._load_screenshot_data_url(request.screenshot_url)
 
         if settings.anthropic_api_key.strip():
-            full_text = await self._feedback_anthropic(prompt, screenshot_data_url)
+            try:
+                full_text = await self._feedback_anthropic(prompt, screenshot_data_url)
+            except anthropic.APIError as exc:
+                raise ValueError(self._format_provider_error("Anthropic", exc)) from exc
         elif settings.moonshot_api_key.strip():
             full_text = await self._feedback_moonshot(prompt, screenshot_data_url)
         else:
@@ -235,6 +238,16 @@ class ClaudeFeedbackService:
     def _format_delta(self, value: float, label: str) -> str:
         sign = "+" if value >= 0 else ""
         return f"{label} {sign}{value:.2f}"
+
+    def _format_provider_error(self, provider: str, exc: Exception) -> str:
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            err = body.get("error")
+            if isinstance(err, dict):
+                message = err.get("message")
+                if isinstance(message, str) and message.strip():
+                    return f"{provider} API error: {message.strip()}"
+        return f"{provider} API error: {exc}"
 
     def _parse_response(self, request: FeedbackRequest, full_text: str) -> FeedbackResponse:
         lines = full_text.strip().split("\n")
