@@ -53,10 +53,12 @@ export default function App() {
         message: "Upload complete. Starting analysis...",
       });
 
+      // Connect WebSocket for real-time progress
       connectProcessingWs(
         video_id,
         (status) => setProcessingStatus(status),
         async () => {
+          // Fetch full results when processing completes
           const result = await getAnalysisResult(video_id);
           setAnalysis(result);
           setAppState("results");
@@ -86,109 +88,84 @@ export default function App() {
     [seekTo]
   );
 
-  const handleNewVideo = useCallback(() => {
-    setAppState("upload");
-    setAnalysis(null);
-    setVideoId("");
-    setSelectedSection(null);
-  }, []);
+  // --- Upload screen ---
+  if (appState === "upload") {
+    return <VideoUpload onUpload={handleUpload} />;
+  }
 
-  const brainActivations = analysis?.brain_activations ?? [];
-  const showResults = appState === "results" && analysis !== null;
+  // --- Processing screen ---
+  if (appState === "processing") {
+    return (
+      <LoadingScreen
+        status={processingStatus}
+        videoId={videoId}
+        onImportAnalysisJson={(data) => {
+          setAnalysis({ ...data, video_id: videoId });
+          setAppState("results");
+        }}
+      />
+    );
+  }
 
-  const handleImportAnalysisJson = (data: AnalysisResult) => {
-    setAnalysis({ ...data, video_id: videoId });
-    setAppState("results");
-  };
+  // --- Results screen ---
+  if (!analysis) return null;
 
   return (
     <div style={styles.layout}>
+      {/* Main content area */}
       <div
         style={{
           ...styles.main,
           marginRight: selectedSection ? 420 : 0,
         }}
       >
+        {/* Header */}
         <header style={styles.header}>
           <h1 style={styles.logo}>Brain Fresh</h1>
-          {appState !== "upload" && (
-            <button type="button" onClick={handleNewVideo} style={styles.newBtn}>
-              New Video
-            </button>
-          )}
+          <button onClick={() => { setAppState("upload"); setAnalysis(null); }} style={styles.newBtn}>
+            New Video
+          </button>
         </header>
 
+        {/* Video + Brain model row */}
         <div style={styles.topRow}>
           <div style={styles.videoCol}>
-            {appState === "upload" && (
-              <VideoUpload embedded onUpload={handleUpload} />
-            )}
-            {appState === "processing" &&
-              (videoId ? (
-                <div style={styles.processingWrap}>
-                  <VideoPlayer
-                    ref={videoRef}
-                    src={getVideoUrl(videoId)}
-                    isPlaying={isPlaying}
-                    currentTime={currentTime}
-                    duration={duration}
-                    onTogglePlay={togglePlay}
-                  />
-                  <div style={styles.processingOverlay}>
-                    <LoadingScreen
-                      embedded
-                      status={processingStatus}
-                      videoId={videoId}
-                      onImportAnalysisJson={handleImportAnalysisJson}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <LoadingScreen
-                  embedded
-                  status={processingStatus}
-                  videoId={videoId}
-                  onImportAnalysisJson={handleImportAnalysisJson}
-                />
-              ))}
-            {showResults && (
-              <VideoPlayer
-                ref={videoRef}
-                src={getVideoUrl(videoId)}
-                isPlaying={isPlaying}
-                currentTime={currentTime}
-                duration={duration}
-                onTogglePlay={togglePlay}
-              />
-            )}
+            <VideoPlayer
+              ref={videoRef}
+              src={getVideoUrl(videoId)}
+              isPlaying={isPlaying}
+              currentTime={currentTime}
+              duration={duration}
+              onTogglePlay={togglePlay}
+            />
           </div>
           <div style={styles.brainCol}>
             <BrainModel
-              activations={brainActivations}
+              activations={analysis.brain_activations}
               currentTime={currentTime}
             />
           </div>
         </div>
 
-        {showResults && (
-          <>
-            <Timeline
-              data={analysis.timeline}
-              currentTime={currentTime}
-              duration={analysis.duration}
-              lowSections={analysis.low_engagement_sections}
-              onSeek={seekTo}
-              onSectionClick={handleSectionClick}
-            />
-            <TranscriptPanel
-              segments={analysis.transcript_segments}
-              currentTime={currentTime}
-              onSeek={seekTo}
-            />
-          </>
-        )}
+        {/* Timeline graph */}
+        <Timeline
+          data={analysis.timeline}
+          currentTime={currentTime}
+          duration={analysis.duration}
+          lowSections={analysis.low_engagement_sections}
+          onSeek={seekTo}
+          onSectionClick={handleSectionClick}
+        />
+
+        {/* Transcript */}
+        <TranscriptPanel
+          segments={analysis.transcript_segments}
+          currentTime={currentTime}
+          onSeek={seekTo}
+        />
       </div>
 
+      {/* Feedback side panel */}
       <FeedbackPanel
         videoId={videoId}
         section={selectedSection}
@@ -237,27 +214,11 @@ const styles: Record<string, React.CSSProperties> = {
     gridTemplateColumns: "2fr 1fr",
     gap: "1rem",
     marginBottom: "1rem",
-    alignItems: "start",
   },
   videoCol: {
     minWidth: 0,
   },
   brainCol: {
     minWidth: 0,
-  },
-  processingWrap: {
-    position: "relative",
-    width: "100%",
-    minWidth: 0,
-  },
-  processingOverlay: {
-    position: "absolute",
-    inset: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "rgba(10, 10, 15, 0.85)",
-    backdropFilter: "blur(8px)",
-    borderRadius: 12,
   },
 };

@@ -4,32 +4,27 @@ import { useRef } from "react";
 
 interface Props {
   status: ProcessingStatus;
-  /** When true, fits beside the brain preview instead of full viewport */
-  embedded?: boolean;
-  videoId?: string;
+  videoId: string;
   onImportAnalysisJson?: (data: AnalysisResult) => void;
 }
 
 export default function LoadingScreen({
   status,
-  embedded,
   videoId,
   onImportAnalysisJson,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   return (
-    <div style={embedded ? styles.containerEmbedded : styles.container}>
-      <div style={embedded ? styles.cardEmbedded : styles.card}>
+    <div style={styles.container}>
+      <div style={styles.card}>
         <div style={styles.iconWrap}>
           <Brain
-            size={embedded ? 36 : 48}
+            size={48}
             color="#8b5cf6"
             style={{ animation: "pulse 2s ease-in-out infinite" }}
           />
         </div>
-        <h2 style={embedded ? styles.titleEmbedded : styles.title}>
-          Analyzing Your Video
-        </h2>
+        <h2 style={styles.title}>Analyzing Your Video</h2>
         {videoId ? (
           <p style={styles.videoIdLine}>
             Video ID for Colab export: <code style={styles.code}>{videoId}</code>
@@ -179,14 +174,6 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: "100vh",
     padding: "2rem",
   },
-  containerEmbedded: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 0,
-    padding: "0.5rem",
-    width: "100%",
-  },
   card: {
     background: "rgba(255,255,255,0.03)",
     border: "1px solid #222",
@@ -196,23 +183,8 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 480,
     width: "100%",
   },
-  cardEmbedded: {
-    background: "rgba(255,255,255,0.03)",
-    border: "1px solid #222",
-    borderRadius: 16,
-    padding: "1.25rem 1.5rem",
-    textAlign: "center",
-    maxWidth: "100%",
-    width: "100%",
-  },
   iconWrap: {
     marginBottom: "1.5rem",
-  },
-  titleEmbedded: {
-    fontSize: "1.15rem",
-    fontWeight: 700,
-    color: "#e0e0e0",
-    marginBottom: "0.35rem",
   },
   title: {
     fontSize: "1.5rem",
