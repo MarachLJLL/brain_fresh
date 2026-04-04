@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
-import { MessageSquare, Loader, Lightbulb, ArrowLeft, AlertTriangle } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Lightbulb,
+  Loader,
+  MessageSquare,
+} from "lucide-react";
 import type { FeedbackResponse, LowEngagementSection } from "../types";
 import { getFeedback } from "../services/api";
 
 interface Props {
   videoId: string;
+  videoDuration: number;
   section: LowEngagementSection | null;
   lowSections: LowEngagementSection[];
   onSelectSection: (section: LowEngagementSection) => void;
@@ -15,6 +22,7 @@ interface Props {
 
 export default function FeedbackPanel({
   videoId,
+  videoDuration,
   section,
   lowSections,
   onSelectSection,
@@ -40,6 +48,9 @@ export default function FeedbackPanel({
             transcript: section.transcript,
             modality: section.modality,
             score: section.score,
+            screenshot_url: section.screenshot_url,
+            screenshot_time: section.screenshot_time,
+            video_duration: section.video_duration ?? videoDuration,
           });
       setFeedback(result);
     } catch (e: any) {
@@ -47,7 +58,7 @@ export default function FeedbackPanel({
     } finally {
       setLoading(false);
     }
-  }, [section, videoId, getFeedbackOverride]);
+  }, [getFeedbackOverride, section, videoDuration, videoId]);
 
   useEffect(() => {
     if (section) {
@@ -60,7 +71,7 @@ export default function FeedbackPanel({
     <div style={styles.overlay}>
       <div style={styles.panel}>
         <div style={styles.header}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <div style={styles.headerTitle}>
             <MessageSquare size={18} color="#8b5cf6" />
             <h3 style={styles.title}>Engagement Feedback</h3>
           </div>
@@ -69,11 +80,16 @@ export default function FeedbackPanel({
         {!section ? (
           <SectionList
             sections={lowSections}
-            onSelect={(s) => { onSelectSection(s); onSeek(s.start_time); }}
+            videoDuration={videoDuration}
+            onSelect={(selected) => {
+              onSelectSection(selected);
+              onSeek(selected.start_time);
+            }}
           />
         ) : (
           <SectionDetail
             section={section}
+            videoDuration={videoDuration}
             loading={loading}
             error={error}
             feedback={feedback}
@@ -89,29 +105,27 @@ export default function FeedbackPanel({
 
 function SectionList({
   sections,
+  videoDuration,
   onSelect,
 }: {
   sections: LowEngagementSection[];
-  onSelect: (s: LowEngagementSection) => void;
+  videoDuration: number;
+  onSelect: (section: LowEngagementSection) => void;
 }) {
   if (!sections.length) {
-    return (
-      <p style={styles.emptyHint}>
-        No low-engagement sections detected. Great job!
-      </p>
-    );
+    return <p style={styles.emptyHint}>No low-engagement sections detected. Great job!</p>;
   }
 
   return (
     <div>
       <p style={styles.listIntro}>
-        These sections had low engagement. Click one to see detailed feedback
-        and suggestions.
+        These sections had low engagement. Open one to review the transcript, frame capture,
+        and model suggestions.
       </p>
       <div style={styles.sectionCards}>
-        {sections.map((sec, i) => (
+        {sections.map((sec, index) => (
           <button
-            key={i}
+            key={`${sec.start_time}-${sec.end_time}-${index}`}
             type="button"
             onClick={() => onSelect(sec)}
             style={styles.sectionCard}
@@ -119,19 +133,25 @@ function SectionList({
             <div style={styles.cardRow}>
               <AlertTriangle size={14} color="#ef4444" />
               <span style={styles.cardTime}>
-                {fmtTime(sec.start_time)} – {fmtTime(sec.end_time)}
+                {fmtTime(sec.start_time)} - {fmtTime(sec.end_time)}
               </span>
-              <span style={{
-                ...styles.cardBadge,
-                color: modalityColor(sec.modality),
-                borderColor: modalityColor(sec.modality) + "55",
-                background: modalityColor(sec.modality) + "15",
-              }}>
+              <span
+                style={{
+                  ...styles.cardBadge,
+                  color: modalityColor(sec.modality),
+                  borderColor: `${modalityColor(sec.modality)}55`,
+                  background: `${modalityColor(sec.modality)}15`,
+                }}
+              >
                 {sec.modality} {Math.round(sec.score * 100)}%
               </span>
             </div>
+            <p style={styles.cardMeta}>{formatSectionPosition(sec, videoDuration)}</p>
             {sec.transcript && (
-              <p style={styles.cardTranscript}>"{sec.transcript.slice(0, 80)}{sec.transcript.length > 80 ? "…" : ""}"</p>
+              <p style={styles.cardTranscript}>
+                "{sec.transcript.slice(0, 80)}
+                {sec.transcript.length > 80 ? "…" : ""}"
+              </p>
             )}
           </button>
         ))}
@@ -142,6 +162,7 @@ function SectionList({
 
 function SectionDetail({
   section,
+  videoDuration,
   loading,
   error,
   feedback,
@@ -150,13 +171,16 @@ function SectionDetail({
   onRetry,
 }: {
   section: LowEngagementSection;
+  videoDuration: number;
   loading: boolean;
   error: string | null;
   feedback: FeedbackResponse | null;
   onBack: () => void;
-  onSeek: (t: number) => void;
+  onSeek: (time: number) => void;
   onRetry: () => void;
 }) {
+  const totalDuration = section.video_duration ?? videoDuration;
+
   return (
     <div>
       <button type="button" onClick={onBack} style={styles.backBtn}>
@@ -165,18 +189,41 @@ function SectionDetail({
       </button>
 
       <div style={styles.sectionInfo}>
-        <button onClick={() => onSeek(section.start_time)} style={styles.timeBtn}>
-          {fmtTime(section.start_time)} – {fmtTime(section.end_time)}
-        </button>
-        <span style={styles.badge}>
-          Low {section.modality} ({Math.round(section.score * 100)}%)
-        </span>
+        <div style={styles.sectionInfoRow}>
+          <button type="button" onClick={() => onSeek(section.start_time)} style={styles.timeBtn}>
+            {fmtTime(section.start_time)} - {fmtTime(section.end_time)}
+          </button>
+          <span style={styles.badge}>
+            Low {section.modality} ({Math.round(section.score * 100)}%)
+          </span>
+        </div>
+        <p style={styles.sectionMeta}>{formatSectionPosition(section, totalDuration)}</p>
       </div>
 
-      {section.transcript && (
-        <div style={styles.transcript}>
-          <p style={styles.transcriptLabel}>Transcript:</p>
-          <p style={styles.transcriptText}>"{section.transcript}"</p>
+      {(section.screenshot_url || section.transcript) && (
+        <div style={styles.contextGrid}>
+          {section.screenshot_url && (
+            <div style={styles.contextCard}>
+              <p style={styles.contextLabel}>
+                Screenshot
+                {section.screenshot_time !== undefined && section.screenshot_time !== null
+                  ? ` at ${fmtTime(section.screenshot_time)}`
+                  : ""}
+              </p>
+              <img
+                src={section.screenshot_url}
+                alt={`Frame from ${fmtTime(section.start_time)} to ${fmtTime(section.end_time)}`}
+                style={styles.screenshotImage}
+              />
+            </div>
+          )}
+
+          {section.transcript && (
+            <div style={styles.contextCard}>
+              <p style={styles.contextLabel}>Transcript</p>
+              <p style={styles.transcriptText}>"{section.transcript}"</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -187,7 +234,7 @@ function SectionDetail({
             color="#8b5cf6"
             style={{ animation: "spin 1s linear infinite" }}
           />
-          <p>Analyzing with Claude...</p>
+          <p>Analyzing this section with the feedback model...</p>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
@@ -195,24 +242,27 @@ function SectionDetail({
       {error && (
         <div style={styles.error}>
           <p>{error}</p>
-          <button onClick={onRetry} style={styles.retryBtn}>Retry</button>
+          <button type="button" onClick={onRetry} style={styles.retryBtn}>
+            Retry
+          </button>
         </div>
       )}
 
       {feedback && (
         <div style={styles.feedbackContent}>
           <div style={styles.analysis}>
+            <p style={styles.analysisLabel}>Why engagement dropped</p>
             <p style={styles.analysisText}>{feedback.feedback}</p>
           </div>
           <div style={styles.suggestions}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
+            <div style={styles.suggestionsHeader}>
               <Lightbulb size={16} color="#f59e0b" />
               <span style={styles.suggestionsTitle}>Suggestions</span>
             </div>
-            {feedback.suggestions.map((s, i) => (
-              <div key={i} style={styles.suggestion}>
-                <span style={styles.suggestionNum}>{i + 1}</span>
-                <p style={styles.suggestionText}>{s}</p>
+            {feedback.suggestions.map((suggestion, index) => (
+              <div key={`${index}-${suggestion.slice(0, 24)}`} style={styles.suggestion}>
+                <span style={styles.suggestionNum}>{index + 1}</span>
+                <p style={styles.suggestionText}>{suggestion}</p>
               </div>
             ))}
           </div>
@@ -222,15 +272,25 @@ function SectionDetail({
   );
 }
 
-function fmtTime(t: number) {
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
+function fmtTime(time: number) {
+  const safe = Math.max(0, time);
+  const minutes = Math.floor(safe / 60);
+  const seconds = Math.floor(safe % 60);
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function modalityColor(m: string) {
-  if (m === "visual") return "#f97316";
-  if (m === "text") return "#22c55e";
+function formatSectionPosition(section: LowEngagementSection, videoDuration: number) {
+  if (!videoDuration || videoDuration <= 0) {
+    return `${fmtTime(section.start_time)} - ${fmtTime(section.end_time)}`;
+  }
+  const startPct = (section.start_time / videoDuration) * 100;
+  const endPct = (section.end_time / videoDuration) * 100;
+  return `${fmtTime(section.start_time)} - ${fmtTime(section.end_time)} of ${fmtTime(videoDuration)} total (${Math.round(startPct)}%-${Math.round(endPct)}% through)`;
+}
+
+function modalityColor(modality: string) {
+  if (modality === "visual") return "#f97316";
+  if (modality === "text") return "#22c55e";
   return "#3b82f6";
 }
 
@@ -240,7 +300,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: 0,
     right: 0,
     bottom: 0,
-    width: 380,
+    width: 430,
     background: "#0d0d14",
     borderLeft: "1px solid #222",
     zIndex: 100,
@@ -251,15 +311,18 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "1.25rem",
   },
   header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
     marginBottom: "1rem",
+  },
+  headerTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
   },
   title: {
     fontSize: "1rem",
     fontWeight: 600,
     color: "#e0e0e0",
+    margin: 0,
   },
   listIntro: {
     fontSize: "0.82rem",
@@ -282,8 +345,8 @@ const styles: Record<string, React.CSSProperties> = {
   sectionCard: {
     display: "flex",
     flexDirection: "column",
-    gap: "0.4rem",
-    padding: "0.75rem 0.85rem",
+    gap: "0.45rem",
+    padding: "0.8rem 0.9rem",
     background: "rgba(255,255,255,0.03)",
     border: "1px solid #2a2a3e",
     borderRadius: 10,
@@ -310,10 +373,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid",
     marginLeft: "auto",
   },
+  cardMeta: {
+    fontSize: "0.73rem",
+    color: "#71717a",
+    lineHeight: 1.4,
+    margin: 0,
+  },
   cardTranscript: {
     fontSize: "0.75rem",
-    color: "#666",
-    lineHeight: 1.4,
+    color: "#9ca3af",
+    lineHeight: 1.45,
     fontStyle: "italic",
     margin: 0,
   },
@@ -332,9 +401,21 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sectionInfo: {
     display: "flex",
+    flexDirection: "column",
+    gap: "0.45rem",
+    marginBottom: "1rem",
+  },
+  sectionInfoRow: {
+    display: "flex",
     alignItems: "center",
     gap: "0.75rem",
-    marginBottom: "1rem",
+    flexWrap: "wrap",
+  },
+  sectionMeta: {
+    fontSize: "0.76rem",
+    color: "#71717a",
+    margin: 0,
+    lineHeight: 1.4,
   },
   timeBtn: {
     background: "rgba(139, 92, 246, 0.15)",
@@ -354,24 +435,39 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#fca5a5",
     fontSize: "0.75rem",
   },
-  transcript: {
-    background: "rgba(255,255,255,0.03)",
-    borderRadius: 8,
-    padding: "0.75rem",
+  contextGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: "0.85rem",
     marginBottom: "1rem",
   },
-  transcriptLabel: {
-    fontSize: "0.7rem",
+  contextCard: {
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 10,
+    padding: "0.75rem",
+    border: "1px solid rgba(255,255,255,0.05)",
+  },
+  contextLabel: {
+    fontSize: "0.68rem",
     color: "#666",
     textTransform: "uppercase",
     letterSpacing: 1,
-    marginBottom: "0.3rem",
+    margin: "0 0 0.45rem 0",
+  },
+  screenshotImage: {
+    width: "100%",
+    display: "block",
+    borderRadius: 8,
+    objectFit: "cover",
+    aspectRatio: "16 / 9",
+    background: "#111827",
   },
   transcriptText: {
-    fontSize: "0.85rem",
+    fontSize: "0.84rem",
     color: "#aaa",
-    lineHeight: 1.5,
+    lineHeight: 1.55,
     fontStyle: "italic",
+    margin: 0,
   },
   loading: {
     display: "flex",
@@ -409,15 +505,29 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "0 8px 8px 0",
     padding: "0.75rem 1rem",
   },
+  analysisLabel: {
+    fontSize: "0.72rem",
+    color: "#a78bfa",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    margin: "0 0 0.45rem 0",
+  },
   analysisText: {
     fontSize: "0.88rem",
     color: "#ccc",
     lineHeight: 1.6,
+    margin: 0,
   },
   suggestions: {
     background: "rgba(255,255,255,0.02)",
     borderRadius: 8,
     padding: "1rem",
+  },
+  suggestionsHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    marginBottom: "0.75rem",
   },
   suggestionsTitle: {
     fontSize: "0.85rem",
@@ -447,5 +557,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.85rem",
     color: "#bbb",
     lineHeight: 1.5,
+    margin: 0,
   },
 };

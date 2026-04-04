@@ -59,6 +59,9 @@ export async function getFeedback(params: {
   transcript: string;
   modality: string;
   score: number;
+  screenshot_url?: string | null;
+  screenshot_time?: number | null;
+  video_duration?: number | null;
 }): Promise<FeedbackResponse> {
   const { data } = await api.post("/feedback/analyze", params);
   return data;

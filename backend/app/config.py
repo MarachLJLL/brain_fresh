@@ -13,10 +13,10 @@ class Settings(BaseSettings):
     tribe_device: str = "auto"
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"
-    # Kimi / Moonshot (OpenAI-compatible). If set, feedback uses this instead of Anthropic.
+    # Kimi / Moonshot (OpenAI-compatible). kimi-k2.5 supports screenshot + transcript feedback.
     moonshot_api_key: str = ""
     moonshot_base_url: str = "https://api.moonshot.cn/v1"
-    moonshot_model: str = "moonshot-v1-8k"
+    moonshot_model: str = "kimi-k2.5"
     low_engagement_threshold: float = 0.3  # bottom 30th percentile = low engagement
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
     # Allow POST /api/video/import-result/{video_id} for Colab / demo JSON (do not enable in production)

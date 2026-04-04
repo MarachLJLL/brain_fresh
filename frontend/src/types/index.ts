@@ -27,6 +27,9 @@ export interface LowEngagementSection {
   modality: string;
   score: number;
   transcript: string;
+  screenshot_url?: string | null;
+  screenshot_time?: number | null;
+  video_duration?: number | null;
 }
 
 export interface TranscriptSegment {

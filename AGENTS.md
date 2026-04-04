@@ -1,26 +1,25 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repo is split by runtime, not by package. `frontend/` contains the React 19 + Vite UI: `src/components/` for panels and the 3D brain viewer, `src/hooks/` for playback sync, `src/services/api.ts` for HTTP/WebSocket calls, `src/types/` for shared TypeScript types, and `public/` for static mesh data such as `brain-mesh.json`. `backend/` contains the FastAPI service: `app/routes/` for API endpoints, `app/services/` for TRIBE and feedback integrations, `app/models/` for Pydantic schemas, and `scripts/` for export utilities. Use `notebooks/` for one-off analysis, not production code. Runtime files in `backend/uploads/` and `backend/model_cache/` should stay untracked.
+This repository is split into two apps. `frontend/` contains the React 19 + Vite client: `src/components/` for UI and 3D brain views, `src/hooks/` for player sync, `src/services/api.ts` for backend calls, `src/types/` for shared TS shapes, and `src/utils/` for local helpers. Static assets live in `frontend/public/`, including `brain-mesh.json` and `brain-modality-map.json`. `backend/` contains the FastAPI service: `app/routes/` for endpoints, `app/services/` for TRIBE/feedback logic, `app/models/` for schemas, and `scripts/` for export utilities. Use `notebooks/` for experiments only. Treat `backend/uploads/` and `backend/model_cache/` as runtime data, not source.
 
 ## Build, Test, and Development Commands
-Run commands from the relevant subdirectory; there is no top-level build wrapper.
-
-- `cd backend && bash run.sh`: create `.venv` if needed and start FastAPI on `:8000`.
-- `cd backend && uv venv && uv pip install -e .[dev]`: install backend app plus `ruff` and `pytest`.
-- `cd backend && .venv/bin/ruff check app scripts`: lint Python code.
-- `cd backend && .venv/bin/pytest`: run backend tests when present.
-- `cd frontend && bash run.sh`: install npm dependencies if needed and start Vite on `:5173`.
-- `cd frontend && npm run build`: run TypeScript compile checks and produce a production bundle.
+- `cd backend && bash run.sh` boots `.venv` if needed and starts FastAPI on `http://localhost:8000`.
+- `cd backend && uv venv && uv pip install -e .[dev]` installs backend dev dependencies.
+- `cd backend && .venv/bin/ruff check app scripts` runs Python linting.
+- `cd backend && .venv/bin/pytest` runs backend tests when present.
+- `cd frontend && bash run.sh` installs npm packages if needed and starts Vite on `http://localhost:5173`.
+- `cd frontend && npm run build` runs TypeScript checks and creates the production bundle.
+- `cd frontend && npm run preview` serves the built frontend locally.
 
 ## Coding Style & Naming Conventions
-Python uses 4-space indentation, `snake_case` modules, and `PascalCase` schema/class names. Keep lines within Ruff's 100-character limit. TypeScript uses strict mode, functional React components, `PascalCase` component filenames, and `camelCase` hooks/utilities such as `useVideoSync` and `mockAnalysis`. No ESLint or Prettier config is committed, so match existing formatting and import style in touched files.
+Use 4-space indentation in Python, `snake_case` for modules/functions, and `PascalCase` for classes and Pydantic models. Ruff enforces a 100-character line length in the backend. In TypeScript, keep functional React components in `PascalCase` files like `BrainModel.tsx`, and use `camelCase` for hooks and utilities such as `useVideoSync`. `frontend/tsconfig.json` is strict; preserve explicit types at API boundaries.
 
 ## Testing Guidelines
-The repo currently ships no first-party tests. For backend logic, add `pytest` coverage under `backend/tests/` with `test_<feature>.py` naming. For frontend changes, `npm run build` is the minimum gate; also smoke-test upload, processing, and results flows against the local backend.
+No first-party test suite is committed yet. For backend changes, add `pytest` tests under `backend/tests/` using `test_<feature>.py`. For frontend work, `npm run build` is the minimum check; also manually verify upload, progress updates, and results rendering against the local backend.
 
 ## Commit & Pull Request Guidelines
-Recent history uses short, imperative subjects such as `fixed how brain displays`. Keep commits focused and subjects concise. PRs should summarize user-visible behavior, note any `.env` or model-setting changes, and include screenshots or short recordings for UI work in `frontend/src/`.
+Recent commits use short subjects such as `voxels`, `interface complete`, and `fixed progress bar`. Prefer concise, focused commit messages and keep each commit scoped to one change. PRs should summarize behavior changes, mention any `.env` or model-setting updates, link related issues, and include screenshots or recordings for UI changes.
 
 ## Security & Configuration Tips
-Copy `backend/.env.example` to `backend/.env` and keep API keys out of git. Do not commit uploaded videos, cached model artifacts, or generated local analysis data.
+Create `backend/.env` from `backend/.env.example` and keep API keys out of git. Do not commit uploaded videos, cached model files, or other generated analysis artifacts.

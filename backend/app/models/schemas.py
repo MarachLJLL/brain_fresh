@@ -43,6 +43,9 @@ class LowEngagementSection(BaseModel):
     modality: str  # which modality is low
     score: float
     transcript: str = ""
+    screenshot_url: str | None = None
+    screenshot_time: float | None = None
+    video_duration: float | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -52,6 +55,9 @@ class FeedbackRequest(BaseModel):
     transcript: str = ""
     modality: str = ""
     score: float = 0.0
+    screenshot_url: str | None = None
+    screenshot_time: float | None = None
+    video_duration: float | None = None
 
 
 class FeedbackResponse(BaseModel):
