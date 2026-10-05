@@ -1,5 +1,17 @@
 # Brain Fresh
 
+**See how a video engages the brain—and where it could be stronger.**
+
+[Watch the demo](https://www.youtube.com/watch?v=VZ1Ea2GSkgo) · [Read the Devpost submission](https://devpost.com/software/brain-fresh) · [Run locally](#how-to-run)
+
+[![Brain Fresh video analysis interface and cortical brain visualization](https://d112y698adiu2z.cloudfront.net/photos/production/software_photos/004/528/186/datas/original.png)](https://www.youtube.com/watch?v=VZ1Ea2GSkgo)
+
+*Click the screenshot to watch the original demo featured on Devpost.*
+
+Built for the **Claude Builders AI Hackathon** by **Luis Joseph Limgenco, Isaac Hu, and Jason Shao**.
+
+## Overview
+
 Brain Fresh is a full-stack video engagement analyzer built around Meta's TRIBE v2 neural brain encoding model. You upload a video, the backend runs TRIBE-based cortical response inference, and the frontend renders the result as an interactive experience with:
 
 - a synchronized video player
@@ -17,6 +29,19 @@ At a high level, the app answers:
 - Which modality is weakest in those sections: visual, audio, or text?
 - What does the model's cortical activity look like over time?
 - What concrete changes could improve the low-engagement moments?
+
+## Try the bundled demo
+
+```bash
+git clone https://github.com/MarachLJLL/brain_fresh.git
+cd brain_fresh/frontend
+npm install
+npm run dev
+```
+
+Open **http://localhost:5173** and select **Load Pre-processed Demo (TRIBE v2 output)**. The bundled recording and analysis let you explore the interface before setting up TRIBE locally. Generating new AI feedback requires the backend and a configured feedback provider.
+
+For your own videos, follow [How to run](#how-to-run) below.
 
 ## Tech Stack
 
@@ -48,6 +73,9 @@ At a high level, the app answers:
 
 - Meta TRIBE v2 for cortical response prediction
 - Moonshot/Kimi or Anthropic Claude for feedback generation
+
+<details>
+<summary><strong>Architecture, data flow, and API reference</strong></summary>
 
 ## Architecture
 
@@ -160,8 +188,8 @@ When a low-engagement section is selected, the frontend posts `POST /api/feedbac
 
 The backend enriches the request with stored section context when available, then calls:
 
-- Moonshot/Kimi if `MOONSHOT_API_KEY` is set
-- otherwise Anthropic Claude if `ANTHROPIC_API_KEY` is set
+- Anthropic Claude if `ANTHROPIC_API_KEY` is set
+- otherwise Moonshot/Kimi if `MOONSHOT_API_KEY` is set
 
 ## Frontend Architecture
 
@@ -195,7 +223,7 @@ Coordinates:
 - `services/api.ts`: HTTP + websocket API wrapper
 - `hooks/useVideoSync.ts`: current playback time / play-pause / seek synchronization
 - `types/index.ts`: shared TypeScript interfaces
-- `utils/mockAnalysis.ts`: demo-mode mock analysis without the backend
+- `public/demo/`: bundled video and precomputed TRIBE v2 analysis for the demo
 
 ## Backend Architecture
 
@@ -310,6 +338,8 @@ Useful when:
 
 Generates a concise explanation plus concrete suggestions for a weak section.
 
+</details>
+
 ## Environment Configuration
 
 Copy the example file before running the backend:
@@ -328,11 +358,11 @@ Key variables:
 - `ALLOW_ANALYSIS_IMPORT=0`
   - set to `1` to allow `POST /api/video/import-result/{video_id}`
 - `MOONSHOT_API_KEY=...`
-  - enables feedback through Moonshot/Kimi
+  - enables feedback through Moonshot/Kimi when Anthropic is not configured
 - `MOONSHOT_MODEL=kimi-k2.5`
 - `MOONSHOT_BASE_URL=https://api.moonshot.cn/v1`
 - `ANTHROPIC_API_KEY=...`
-  - fallback feedback provider if Moonshot is not configured
+  - preferred feedback provider when configured
 - `CLAUDE_MODEL=claude-sonnet-4-20250514`
 
 You need at least one of:
@@ -370,7 +400,7 @@ bash run.sh
 What `backend/run.sh` does:
 
 - creates `.venv` with `uv` if it does not already exist
-- installs backend dependencies
+- installs backend dependencies when creating the environment
 - starts Uvicorn on port `8000`
 
 Backend URL:
@@ -399,7 +429,7 @@ Frontend URL:
 Open the frontend in your browser and either:
 
 - upload a real video and process it through the backend
-- use demo mode to load a local video into the mock analysis path
+- select **Load Pre-processed Demo (TRIBE v2 output)** to explore the bundled video and precomputed analysis without running local inference
 
 ## Development Commands
 
@@ -464,6 +494,8 @@ and is intended for a more TRIBE-style pial/inflated cortical viewer.
 
 ## Current Limitations
 
+The timeline reflects model-predicted cortical responses and derived engagement scores, not measurements of an individual viewer's attention.
+
 - analysis results are stored in memory, not in a database
 - uploads persist on disk under `backend/uploads`, but metadata does not
 - the current frontend brain viewer is a lightweight browser renderer, not the original Meta demo implementation
@@ -506,3 +538,4 @@ This is expected with the current in-memory `analysis_store`.
 - [frontend/src/App.tsx](frontend/src/App.tsx)
 - [frontend/src/components/BrainModel.tsx](frontend/src/components/BrainModel.tsx)
 - [frontend/src/services/api.ts](frontend/src/services/api.ts)
+
